@@ -5,8 +5,8 @@ import csv
 from natsort import natsorted
 
 # === 設定 ===
-input_folder = "study/mp4_output/0_train"
-csv_file = "study/0_train.csv"
+input_folder = "study/mp4_output/2_train"
+csv_file = "study/2_train.csv"
 MAX_MARKERS = 16
 MIN_AREA = 15
 MAX_CENTER_DISTANCE = 8
