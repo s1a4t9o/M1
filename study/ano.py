@@ -1,3 +1,5 @@
+#写真群⇒マーカー検出⇒csvに保存・アノテーション作業を行う
+
 import cv2
 import numpy as np
 import os

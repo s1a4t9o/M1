@@ -1,3 +1,5 @@
+#あるフォルダにある写真群からランダムに???枚選んで別のファイルにコピーする
+
 import os
 import random
 import shutil
@@ -7,6 +9,8 @@ input_dir = "study/mp4_output/4_ok_ver2"   # 元の画像フォルダ
 output_dir = "study/mp4_output/4_add"      # コピー先フォルダ
 os.makedirs(output_dir, exist_ok=True)
 
+NUMBER = 100
+
 # === 対象となる拡張子 ===
 valid_exts = (".jpg", ".jpeg", ".png", ".bmp")
 
@@ -14,8 +18,8 @@ valid_exts = (".jpg", ".jpeg", ".png", ".bmp")
 all_images = [f for f in os.listdir(input_dir) if f.lower().endswith(valid_exts)]
 total = len(all_images)
 
-# === ランダムに1030枚選ぶ ===
-sample_size = 228
+# === ランダムに???枚選ぶ ===
+sample_size = NUMBER
 if sample_size > total:
     raise ValueError(f"フォルダ内の画像が {total} 枚しかありません（1030枚選べません）")
 
