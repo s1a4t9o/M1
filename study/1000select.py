@@ -3,8 +3,8 @@ import random
 import shutil
 
 # === 入出力フォルダ ===
-input_dir = "study/mp4_output/left_ok"   # 元の画像フォルダ
-output_dir = "study/mp4_output/left1000"      # コピー先フォルダ
+input_dir = "study/mp4_output/4_ok_ver2"   # 元の画像フォルダ
+output_dir = "study/mp4_output/4_add"      # コピー先フォルダ
 os.makedirs(output_dir, exist_ok=True)
 
 # === 対象となる拡張子 ===
@@ -15,7 +15,7 @@ all_images = [f for f in os.listdir(input_dir) if f.lower().endswith(valid_exts)
 total = len(all_images)
 
 # === ランダムに1030枚選ぶ ===
-sample_size = 1030
+sample_size = 228
 if sample_size > total:
     raise ValueError(f"フォルダ内の画像が {total} 枚しかありません（1030枚選べません）")
 

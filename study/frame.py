@@ -2,8 +2,8 @@ import cv2
 import os
 import math
 
-video_path = "study/mp4_input/0.mp4"
-output_dir = "study/mp4_output/0"
+video_path = "study/mp4_input/22.mp4"
+output_dir = "study/mp4_output/4_ver2"
 os.makedirs(output_dir, exist_ok=True)
 
 cap = cv2.VideoCapture(video_path)

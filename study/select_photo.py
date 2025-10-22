@@ -23,9 +23,9 @@ RADIUS_RATIO_MAX = 0.7
 MIN_AREA = 15
 
 # === フォルダ設定 ===
-input_dir = "study/mp4_output/0"
+input_dir = "study/mp4_output/4_ver2"
 output_dir = "study/mp4_output/output"
-copy_dir = "study/mp4_output/0_ver1"   # 13個以上の画像をコピー
+copy_dir = "study/mp4_output/4_ok_ver2"   # 13個以上の画像をコピー
 os.makedirs(output_dir, exist_ok=True)
 os.makedirs(copy_dir, exist_ok=True)
 
@@ -77,7 +77,7 @@ for filename in image_files:
     print(f"✅ 保存: {output_path}  中心数={len(centers)}")
 
     # === 中心が?個以上あればコピー ===
-    if len(centers) >= 10:
+    if len(centers) >= 15:
         shutil.copy2(input_path, os.path.join(copy_dir, filename))
         print(f"📸 {filename} を {copy_dir} にコピーしました。")
 

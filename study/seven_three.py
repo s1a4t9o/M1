@@ -3,9 +3,9 @@ import random
 import shutil
 
 # 入力フォルダと出力フォルダの設定
-photo_folder = "study/mp4_output/2"  # 画像が入っているフォルダ
-output2_folder = "study/mp4_output/2_train"  # 70%が移動するフォルダ
-output1_folder = "study/mp4_output/2_valid"  # 30%が移動するフォルダ
+photo_folder = "study/mp4_output/4_ok_ver1"  # 画像が入っているフォルダ
+output2_folder = "study/mp4_output/4_train"  # 70%が移動するフォルダ
+output1_folder = "study/mp4_output/4_valid"  # 30%が移動するフォルダ
 
 # 出力フォルダが存在しない場合は作成
 os.makedirs(output1_folder, exist_ok=True)
