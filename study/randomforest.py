@@ -18,13 +18,13 @@ def main():
     print(f"[START] {run_id}")
 
     # ===== 学習データ =====
-    train = pd.read_csv("study/0828_ver2_train.csv", usecols=FEATURES + [LABEL], dtype="float64")
+    train = pd.read_csv("study/1020_train_ver2.csv", usecols=FEATURES + [LABEL], dtype="float64")
     X_train = train.drop(columns=[LABEL])
     y_train = train[LABEL].astype(int)
 
     # ===== 検証データ（識別用メタ列があれば一緒に読む） =====
     # まず全列読み -> あれば IDENT_COLS を拾う（無ければ使わない）
-    test_full = pd.read_csv("study/0828_ver2_valid.csv")
+    test_full = pd.read_csv("study/1020_valid_ver2.csv")
     ident_cols = [c for c in IDENT_COLS_CANDIDATES if c in test_full.columns]
     # 特徴＋ラベルだけで学習/評価、ident は後でくっつける
     test = test_full[FEATURES + [LABEL]].copy()
