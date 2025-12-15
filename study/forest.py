@@ -3,7 +3,7 @@ import sys
 import time
 import numpy as np
 import pandas as pd
-from sklearn.svm import SVC
+from sklearn.tree import DecisionTreeClassifier
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, confusion_matrix, classification_report
@@ -23,7 +23,9 @@ def main():
     print(f"[START] {run_id}")
 
     # ===== 学習データ =====
-    train = pd.read_csv("study/1020_train_ver2.csv", usecols=FEATURES + [LABEL], dtype="float64")
+    train = pd.read_csv("study/1020_train_ver2.csv",
+                        usecols=FEATURES + [LABEL],
+                        dtype="float64")
     X_train = train.drop(columns=[LABEL])
     y_train = train[LABEL].astype(int)
 
@@ -35,19 +37,18 @@ def main():
     X_test = test.drop(columns=[LABEL])
     y_test = test[LABEL].astype(int)
 
-    # ===== 線形 SVM =====
-    # kernel='linear' にすると線形 SVM になる
-    model = SVC(
-        kernel="linear",
-        C=1.0,              # 線形の場合は C が最重要パラメータ
-        probability=False,   # predict_proba を使うため必須
+    # ===== 決定木モデル =====
+    model = DecisionTreeClassifier(
+        criterion="gini",     # or "entropy"
+        max_depth=8,          # ★ 過学習防止のポイント（要チューニング）
+        min_samples_leaf=5,   # ★ 各葉に最低5サンプル
         random_state=42
     )
 
-    print("[INFO] Training Linear SVM...")
+    print("[INFO] Training DecisionTreeClassifier...")
     model.fit(X_train, y_train)
 
-    # ===== 予測 =====
+    # ===== 予測・評価 =====
     y_pred = model.predict(X_test)
     n_classes = len(np.unique(y_test))
     avg = "binary" if n_classes == 2 else "macro"
@@ -70,7 +71,11 @@ def main():
     # ===== 予測確率 =====
     proba = model.predict_proba(X_test)
     classes = model.classes_
-    proba_df = pd.DataFrame(proba, columns=[f"p_{c}" for c in classes], index=X_test.index)
+    proba_df = pd.DataFrame(
+        proba,
+        columns=[f"p_{c}" for c in classes],
+        index=X_test.index
+    )
 
     pred_conf = proba_df.max(axis=1)
     class_to_col = {c: i for i, c in enumerate(classes)}
@@ -99,8 +104,8 @@ def main():
     # ===== 保存 =====
     os.makedirs("study/models", exist_ok=True)
     ts = time.strftime('%Y%m%d-%H%M%S')
-    eval_csv = f"study/models/eval_detail_linear_svm_{ts}.csv"
-    err_csv  = f"study/models/errors_linear_svm_{ts}.csv"
+    eval_csv = f"study/models/eval_detail_dtree_{ts}.csv"
+    err_csv  = f"study/models/errors_dtree_{ts}.csv"
 
     detail.to_csv(eval_csv, index=False)
     errors.to_csv(err_csv, index=False)
@@ -108,7 +113,6 @@ def main():
     print(f"\n🧾 Saved eval detail: {eval_csv}")
     print(f"❌ Saved misclassifications: {err_csv}  (count={len(errors)}/{len(detail)})")
 
-    # ===== 誤分類の解析 =====
     if len(errors) > 0:
         cols_show = ["row_id", "y_true", "y_pred", "pred_conf", "true_conf"] + ident_cols
         top_hard = errors.sort_values("pred_conf", ascending=False).head(10)[cols_show]
@@ -126,7 +130,7 @@ def main():
         print("\nNo misclassifications 🎉")
 
     # ===== モデル保存 =====
-    model_path = "study/models/pose_model_linear_svm.sav"
+    model_path = "study/models/pose_model_dtree.sav"
     joblib.dump(model, model_path)
     print(f"✅ Saved: {model_path}  ({run_id})")
 

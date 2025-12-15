@@ -3,7 +3,7 @@ import sys
 import time
 import numpy as np
 import pandas as pd
-from sklearn.svm import SVC
+from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, confusion_matrix, classification_report
@@ -16,6 +16,7 @@ FEATURES = ["x__1", "x__2", "x__3", "x__4", "x__5", "x__6", "x__7", "x__8",
             "x__25", "x__26", "x__27", "x__28", "x__29", "x__30", "x__31", "x__32"]
 LABEL = "y"
 
+# 将来、メタ情報が増えても勝手に拾えるようにしておく
 IDENT_COLS_CANDIDATES = ["src", "filename", "time", "id", "row_id"]
 
 def main():
@@ -23,11 +24,13 @@ def main():
     print(f"[START] {run_id}")
 
     # ===== 学習データ =====
-    train = pd.read_csv("study/1020_train_ver2.csv", usecols=FEATURES + [LABEL], dtype="float64")
+    train = pd.read_csv("study/1020_train_ver2.csv",
+                        usecols=FEATURES + [LABEL],
+                        dtype="float64")
     X_train = train.drop(columns=[LABEL])
     y_train = train[LABEL].astype(int)
 
-    # ===== 検証データ =====
+    # ===== 検証データ（フル読みして ident_col を拾う） =====
     test_full = pd.read_csv("study/1020_valid_ver2.csv")
     ident_cols = [c for c in IDENT_COLS_CANDIDATES if c in test_full.columns]
 
@@ -35,16 +38,19 @@ def main():
     X_test = test.drop(columns=[LABEL])
     y_test = test[LABEL].astype(int)
 
-    # ===== 線形 SVM =====
-    # kernel='linear' にすると線形 SVM になる
-    model = SVC(
-        kernel="linear",
-        C=1.0,              # 線形の場合は C が最重要パラメータ
-        probability=False,   # predict_proba を使うため必須
-        random_state=42
+    # ===== ロジスティック回帰（多クラス対応） =====
+    # multi_class="multinomial" にすることでソフトマックス的な多クラス分類
+    # データ数・特徴量的に重そうなら max_iter を増やしておく
+    model = LogisticRegression(
+        penalty="l2",
+        C=1.0,
+        solver="lbfgs",         # 多クラス（multinomial） + L2 に対応
+        multi_class="multinomial",
+        max_iter=1000,
+        n_jobs=-1               # 並列（環境によっては無視される）
     )
 
-    print("[INFO] Training Linear SVM...")
+    print("[INFO] Training LogisticRegression (multinomial)...")
     model.fit(X_train, y_train)
 
     # ===== 予測 =====
@@ -68,10 +74,15 @@ def main():
     print(classification_report(y_test, y_pred, digits=4, zero_division=0))
 
     # ===== 予測確率 =====
-    proba = model.predict_proba(X_test)
+    proba = model.predict_proba(X_test)  # shape: (n_samples, n_classes)
     classes = model.classes_
-    proba_df = pd.DataFrame(proba, columns=[f"p_{c}" for c in classes], index=X_test.index)
+    proba_df = pd.DataFrame(
+        proba,
+        columns=[f"p_{c}" for c in classes],
+        index=X_test.index
+    )
 
+    # 予測確信度（最大確率）と真のクラスの確率
     pred_conf = proba_df.max(axis=1)
     class_to_col = {c: i for i, c in enumerate(classes)}
     true_conf = pd.Series(
@@ -80,7 +91,7 @@ def main():
         name="true_conf"
     )
 
-    # ===== 明細 =====
+    # ===== 明細データフレーム =====
     detail = pd.DataFrame({
         "row_id": X_test.index,
         "y_true": y_test.to_numpy(),
@@ -90,17 +101,21 @@ def main():
         "correct": (y_pred == y_test.to_numpy())
     }, index=X_test.index)
 
+    # 識別用メタ列があれば結合
     if ident_cols:
         detail = pd.concat([test_full[ident_cols], detail], axis=1)
 
+    # 各クラス確率も連結
     detail = pd.concat([detail, proba_df], axis=1)
+
+    # 誤分類だけ
     errors = detail[~detail["correct"]].copy()
 
-    # ===== 保存 =====
+    # ===== CSV 保存 =====
     os.makedirs("study/models", exist_ok=True)
     ts = time.strftime('%Y%m%d-%H%M%S')
-    eval_csv = f"study/models/eval_detail_linear_svm_{ts}.csv"
-    err_csv  = f"study/models/errors_linear_svm_{ts}.csv"
+    eval_csv = f"study/models/eval_detail_logreg_{ts}.csv"
+    err_csv  = f"study/models/errors_logreg_{ts}.csv"
 
     detail.to_csv(eval_csv, index=False)
     errors.to_csv(err_csv, index=False)
@@ -108,7 +123,7 @@ def main():
     print(f"\n🧾 Saved eval detail: {eval_csv}")
     print(f"❌ Saved misclassifications: {err_csv}  (count={len(errors)}/{len(detail)})")
 
-    # ===== 誤分類の解析 =====
+    # ===== 誤分類の簡易解析 =====
     if len(errors) > 0:
         cols_show = ["row_id", "y_true", "y_pred", "pred_conf", "true_conf"] + ident_cols
         top_hard = errors.sort_values("pred_conf", ascending=False).head(10)[cols_show]
@@ -126,7 +141,7 @@ def main():
         print("\nNo misclassifications 🎉")
 
     # ===== モデル保存 =====
-    model_path = "study/models/pose_model_linear_svm.sav"
+    model_path = "study/models/pose_model_logreg.sav"
     joblib.dump(model, model_path)
     print(f"✅ Saved: {model_path}  ({run_id})")
 
