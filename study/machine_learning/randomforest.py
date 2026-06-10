@@ -1,3 +1,5 @@
+# ランダムフォレスト（Random Forest）を使った分類モデルの学習・評価コード
+
 import os
 import sys
 import time

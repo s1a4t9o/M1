@@ -1,9 +1,13 @@
+# k近傍法（K-Nearest Neighbors）を使った分類モデルの学習・評価コード
+
 import os
 import sys
 import time
 import numpy as np
 import pandas as pd
-from sklearn.svm import SVC
+from sklearn.neighbors import KNeighborsClassifier
+from sklearn.preprocessing import StandardScaler
+from sklearn.pipeline import Pipeline
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score,
     f1_score, confusion_matrix, classification_report
@@ -23,7 +27,9 @@ def main():
     print(f"[START] {run_id}")
 
     # ===== 学習データ =====
-    train = pd.read_csv("study/1020_train_ver2.csv", usecols=FEATURES + [LABEL], dtype="float64")
+    train = pd.read_csv("study/1020_train_ver2.csv",
+                        usecols=FEATURES + [LABEL],
+                        dtype="float64")
     X_train = train.drop(columns=[LABEL])
     y_train = train[LABEL].astype(int)
 
@@ -35,20 +41,22 @@ def main():
     X_test = test.drop(columns=[LABEL])
     y_test = test[LABEL].astype(int)
 
-    # ===== SVM（RBF）モデル =====
-    # C と gamma はとりあえず典型値。後で GridSearch も可能。
-    model = SVC(
-        kernel="rbf",
-        C=10,
-        gamma="scale",
-        probability=True,   # 必須：predict_proba を使うため
-        random_state=42
-    )
+    # ===== k近傍法モデル（標準化つきパイプライン） =====
+    # KNN は距離ベースなので、標準化しておく方が圧倒的に良い
+    model = Pipeline([
+        ("scaler", StandardScaler()),
+        ("knn", KNeighborsClassifier(
+            n_neighbors=5,      # k の値。後で変えて比較してもOK
+            weights="distance", # 距離に応じて重みづけ（"uniform" でも良い）
+            metric="minkowski", # デフォルト（p=2 でユークリッド距離）
+            p=2
+        ))
+    ])
 
-    print("[INFO] Training SVM (RBF kernel)...")
+    print("[INFO] Training k-NN classifier...")
     model.fit(X_train, y_train)
 
-    # ===== 予測 =====
+    # Pipeline なので、predict / predict_proba はそのまま呼べる
     y_pred = model.predict(X_test)
     n_classes = len(np.unique(y_test))
     avg = "binary" if n_classes == 2 else "macro"
@@ -71,7 +79,11 @@ def main():
     # ===== 予測確率 =====
     proba = model.predict_proba(X_test)
     classes = model.classes_
-    proba_df = pd.DataFrame(proba, columns=[f"p_{c}" for c in classes], index=X_test.index)
+    proba_df = pd.DataFrame(
+        proba,
+        columns=[f"p_{c}" for c in classes],
+        index=X_test.index
+    )
 
     pred_conf = proba_df.max(axis=1)
     class_to_col = {c: i for i, c in enumerate(classes)}
@@ -81,7 +93,7 @@ def main():
         name="true_conf"
     )
 
-    # ===== 明細 =====
+    # ===== 明細データフレーム =====
     detail = pd.DataFrame({
         "row_id": X_test.index,
         "y_true": y_test.to_numpy(),
@@ -100,8 +112,8 @@ def main():
     # ===== 保存 =====
     os.makedirs("study/models", exist_ok=True)
     ts = time.strftime('%Y%m%d-%H%M%S')
-    eval_csv = f"study/models/eval_detail_svm_{ts}.csv"
-    err_csv  = f"study/models/errors_svm_{ts}.csv"
+    eval_csv = f"study/models/eval_detail_knn_{ts}.csv"
+    err_csv  = f"study/models/errors_knn_{ts}.csv"
 
     detail.to_csv(eval_csv, index=False)
     errors.to_csv(err_csv, index=False)
@@ -127,7 +139,8 @@ def main():
         print("\nNo misclassifications 🎉")
 
     # ===== モデル保存 =====
-    model_path = "study/models/pose_model_svm.sav"
+    # Pipeline ごと保存しておけば、あとでそのまま predict 可能
+    model_path = "study/models/pose_model_knn.sav"
     joblib.dump(model, model_path)
     print(f"✅ Saved: {model_path}  ({run_id})")
 
