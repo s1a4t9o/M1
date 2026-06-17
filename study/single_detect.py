@@ -19,7 +19,7 @@ RADIUS_RATIO_MAX = 0.7
 MIN_AREA = 15              # 面積の下限（px^2）
 
 # === 入力画像を読み込み（適宜ファイル名変更） ===
-image = cv2.imread("study/a.png")  # ← 対象の画像ファイル名に変更してください
+image = cv2.imread("aaa.png")  # ← 対象の画像ファイル名に変更してください
 if image is None:
     raise FileNotFoundError("❌ 入力画像が見つかりません。ファイル名を確認してください。")
 

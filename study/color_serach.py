@@ -6,7 +6,7 @@ import os
 MIN_AREA = 15  # ここ未満のピクセル数を持つ成分は捨てる
 
 # === 入力画像 ===
-input_path = "study/mp4_output/test2/frame_0239.jpg"
+input_path = "q4c.png"
 image = cv2.imread(input_path)
 if image is None:
     raise FileNotFoundError(f"画像が読み込めません: {input_path}")
