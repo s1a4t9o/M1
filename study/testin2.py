@@ -164,9 +164,12 @@ MIN_AREA = 15
 # =========================
 # 入力画像
 # =========================
-image = cv2.imread("q8c.png")
+input_path = "q13.jpg"
+output_path = "output_marker_result.jpg"
+
+image = cv2.imread(input_path)
 if image is None:
-    raise FileNotFoundError("入力画像が見つかりません。")
+    raise FileNotFoundError(f"入力画像が見つかりません: {input_path}")
 
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
@@ -288,24 +291,11 @@ for m in markers:
         2
     )
 
-    debug_text = (
-        f"type:{m['type']} "
-        f"in:{m['inner_color']} "
-        f"mid:{m['middle_color']} "
-        f"out:{m['outer_color']}"
-    )
 
-    cv2.putText(
-        image,
-        debug_text,
-        (center[0] - 80, center[1] + 25),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (0, 0, 255),
-        1
-    )
+# =========================
+# 出力画像を保存
+# =========================
+cv2.imwrite(output_path, image)
 
-
-cv2.imshow("HIDAS Marker ID Assignment", image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+print(f"検出マーカー数: {len(markers)}")
+print(f"出力画像を保存しました: {output_path}")
