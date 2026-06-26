@@ -1,12 +1,13 @@
+#色の閾値を調整するためのコード（画像版）
+
 import cv2
 import numpy as np
-import os
 
 # === パラメータ ===
 MIN_AREA = 15  # ここ未満のピクセル数を持つ成分は捨てる
 
 # === 入力画像 ===
-input_path = "q4c.png"
+input_path = "images/q18.png"
 image = cv2.imread(input_path)
 if image is None:
     raise FileNotFoundError(f"画像が読み込めません: {input_path}")

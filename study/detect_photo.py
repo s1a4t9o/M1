@@ -1,6 +1,9 @@
+## マーカー検出コード（入力出力：画像　角度も描画）
+
 import cv2
 import numpy as np
 import math
+
 
 def find_circles(mask, MIN_AREA):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -52,7 +55,6 @@ def sample_color_at_radius(hsv, center, radius):
 
     for deg in angles:
         rad = math.radians(deg)
-
         x = int(cx + math.cos(rad) * radius)
         y = int(cy + math.sin(rad) * radius)
 
@@ -89,29 +91,30 @@ def angle_from_center(point, hid_center):
     x, y = point
     cx, cy = hid_center
 
-    # 画像座標はy軸が下向きなので、数学座標っぽく扱う
+    # 画像座標はy軸が下向きなので、数学座標として扱う
     return math.atan2(-(y - cy), x - cx)
 
 
 def assign_ids_by_order(markers):
     if len(markers) == 0:
-        return markers
+        return markers, None
 
-    # HIDAS全体中心を全マーカー中心の平均で推定
+    # HIDAS中心
     hid_cx = sum(m["center"][0] for m in markers) / len(markers)
     hid_cy = sum(m["center"][1] for m in markers) / len(markers)
     hid_center = (hid_cx, hid_cy)
 
     for m in markers:
         m["angle"] = angle_from_center(m["center"], hid_center)
+        m["angle_deg"] = math.degrees(m["angle"])
 
-    # 反時計回り順に並べる
+    # 角度順に並べる
     markers_sorted = sorted(markers, key=lambda m: m["angle"])
 
-    # ID1を優先して基準にする
     base_index = None
     base_id = None
 
+    # ID1を優先して基準にする
     for i, m in enumerate(markers_sorted):
         if m["type"] == 1:
             base_index = i
@@ -126,33 +129,51 @@ def assign_ids_by_order(markers):
                 base_id = 9
                 break
 
-    # どちらも見えない場合
+    # ID1もID9も見えない場合
     if base_index is None:
         for m in markers_sorted:
             m["assigned_id"] = -1
-        return markers_sorted
+        return markers_sorted, hid_center
 
     n = len(markers_sorted)
 
     for i in range(n):
-        offset = (i - base_index) % n
-        assigned_id = ((base_id - 1 + offset) % 16) + 1
         m = markers_sorted[i]
+
+        # 検出できたID1とID9は絶対固定
+        if m["type"] == 1:
+            m["assigned_id"] = 1
+            continue
+
+        if m["type"] == 9:
+            m["assigned_id"] = 9
+            continue
+
+        # 時計回り(CW)にIDを補完
+        offset = (base_index - i) % n
+        assigned_id = ((base_id - 1 + offset) % 16) + 1
         m["assigned_id"] = assigned_id
 
-    return markers_sorted
+    return markers_sorted, hid_center
 
 
-# === パラメータ ===
+# =========================
+# パラメータ
+# =========================
 MAX_CENTER_DISTANCE = 8
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
 
-# === 入力画像 ===
-image = cv2.imread("q7c.png")
+# =========================
+# 入力画像
+# =========================
+input_path = "q17.png"
+output_path = "output_marker_result.jpg"
+
+image = cv2.imread(input_path)
 if image is None:
-    raise FileNotFoundError("入力画像が見つかりません。")
+    raise FileNotFoundError(f"入力画像が見つかりません: {input_path}")
 
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
@@ -189,7 +210,7 @@ for center_r, r_r in red_circles:
             })
 
 
-# 中心が近い候補は、外径が大きいものだけ残す
+# 中心が近い候補は外径が大きいものだけ残す
 final_candidates = []
 
 for cand in sorted(candidates, key=lambda c: c["outer_radius"], reverse=True):
@@ -224,49 +245,89 @@ for cand in final_candidates:
         "inner_color": inner_color,
         "middle_color": middle_color,
         "outer_color": outer_color,
-        "assigned_id": -1
+        "assigned_id": -1,
+        "angle": 0,
+        "angle_deg": 0
     })
 
 
-# 円周順にIDを付与
-markers = assign_ids_by_order(markers)
+# 時計回りにIDを付与
+markers, hid_center = assign_ids_by_order(markers)
 
 
-# === 可視化 ===
+# =========================
+# HIDAS中心を描画
+# =========================
+if hid_center is not None:
+    hx, hy = int(hid_center[0]), int(hid_center[1])
+
+    cv2.circle(image, (hx, hy), 7, (0, 255, 255), -1)
+    cv2.circle(image, (hx, hy), 12, (0, 255, 255), 2)
+
+    cv2.putText(
+        image,
+        "HIDAS CENTER",
+        (hx + 10, hy - 10),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.6,
+        (0, 255, 255),
+        2
+    )
+
+
+# =========================
+# マーカー描画
+# =========================
 for m in markers:
     center = m["center"]
     center_r, r_r = m["red"]
     center_g, r_g = m["green"]
 
+    # HIDAS中心からマーカー中心への線
+    if hid_center is not None:
+        hx, hy = int(hid_center[0]), int(hid_center[1])
+        cv2.line(image, (hx, hy), center, (0, 255, 255), 1)
+
     cv2.circle(image, center, 4, (255, 0, 255), -1)
     cv2.circle(image, center_r, int(r_r), (0, 0, 255), 1)
     cv2.circle(image, center_g, int(r_g), (0, 255, 0), 1)
 
-    text = f"ID:{m['assigned_id']}"
-
+    # ID表示
     cv2.putText(
         image,
-        text,
-        (center[0] - 25, center[1] - 20),
+        f"ID:{m['assigned_id']}",
+        (center[0] - 25, center[1] - 25),
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
         (255, 0, 0),
         2
     )
 
-    debug_text = f"type:{m['type']} in:{m['inner_color']} mid:{m['middle_color']} out:{m['outer_color']}"
-
+    # 角度表示
     cv2.putText(
         image,
-        debug_text,
-        (center[0] - 80, center[1] + 25),
+        f"{m['angle_deg']:.1f}deg",
+        (center[0] - 35, center[1] + 25),
         cv2.FONT_HERSHEY_SIMPLEX,
-        0.4,
-        (0, 0, 255),
-        1
+        0.5,
+        (0, 255, 255),
+        2
     )
 
 
-cv2.imshow("HIDAS Marker ID Assignment", image)
-cv2.waitKey(0)
-cv2.destroyAllWindows()
+# =========================
+# 出力画像を保存
+# =========================
+cv2.imwrite(output_path, image)
+
+print(f"検出マーカー数: {len(markers)}")
+print(f"出力画像を保存しました: {output_path}")
+
+for m in markers:
+    print(
+        f"ID:{m['assigned_id']} "
+        f"type:{m['type']} "
+        f"center:{m['center']} "
+        f"angle:{m['angle_deg']:.1f}deg "
+        f"colors:{m['inner_color']}-{m['middle_color']}-{m['outer_color']}"
+    )
