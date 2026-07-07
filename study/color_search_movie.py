@@ -7,7 +7,7 @@ import numpy as np
 MIN_AREA = 15
 
 # === 入力動画 ===
-input_video_path = "mp4_input/test3.mov"
+input_video_path = "mp4_input/test5.mov"
 
 cap = cv2.VideoCapture(input_video_path)
 if not cap.isOpened():

@@ -1,5 +1,3 @@
-## マーカー検出コード（入力出力：動画　角度も描画）
-
 import cv2
 import numpy as np
 import math
@@ -15,7 +13,7 @@ def find_circles(mask, MIN_AREA):
             continue
 
         (x, y), r = cv2.minEnclosingCircle(cnt)
-        circles.append(((int(x), int(y)), r))
+        circles.append(((int(x), int(y)), r, area))
 
     return circles
 
@@ -49,7 +47,6 @@ def majority_color(colors):
 def sample_color_at_radius(hsv, center, radius):
     cx, cy = center
     height, width = hsv.shape[:2]
-
     angles = [0, 45, 90, 135, 180, 225, 270, 315]
     colors = []
 
@@ -69,28 +66,37 @@ def judge_marker_type(hsv, center, outer_radius):
     middle_color = sample_color_at_radius(hsv, center, outer_radius * 0.48)
     outer_color = sample_color_at_radius(hsv, center, outer_radius * 0.78)
 
-    # 基準ID9：内緑・中赤・外緑
     if inner_color == "green" and middle_color == "red" and outer_color == "green":
         marker_type = 9
-
-    # 基準ID1：内緑・外赤
     elif inner_color == "green" and outer_color == "red":
         marker_type = 1
-
-    # 通常マーカー：内赤・外緑
     elif inner_color == "red" and outer_color == "green":
         marker_type = 0
-
     else:
         marker_type = -1
 
     return marker_type, inner_color, middle_color, outer_color
 
 
+def correct_id1_id9_by_red_area(markers):
+    id1_candidates = [m for m in markers if m["type"] == 1]
+
+    if len(id1_candidates) == 2:
+        m1, m2 = id1_candidates
+
+        if m1["red_area"] >= m2["red_area"]:
+            m1["type"] = 1
+            m2["type"] = 9
+        else:
+            m1["type"] = 9
+            m2["type"] = 1
+
+    return markers
+
+
 def angle_from_center(point, hid_center):
     x, y = point
     cx, cy = hid_center
-
     return math.atan2(-(y - cy), x - cx)
 
 
@@ -130,6 +136,15 @@ def assign_ids_by_order(markers):
         return markers_sorted, hid_center
 
     n = len(markers_sorted)
+    step_counts = []
+
+    for i in range(n):
+        m1 = markers_sorted[i]
+        m2 = markers_sorted[(i + 1) % n]
+        x1, y1 = m1["center"]
+        x2, y2 = m2["center"]
+        dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+        step_counts.append(2 if dist > MISSING_CELL_DISTANCE_THRESHOLD else 1)
 
     for i in range(n):
         m = markers_sorted[i]
@@ -142,11 +157,106 @@ def assign_ids_by_order(markers):
             m["assigned_id"] = 9
             continue
 
-        offset = (base_index - i) % n
+        offset = 0
+        cursor = i
+
+        while cursor != base_index:
+            offset += step_counts[cursor]
+            cursor = (cursor + 1) % n
+
         assigned_id = ((base_id - 1 + offset) % 16) + 1
         m["assigned_id"] = assigned_id
 
     return markers_sorted, hid_center
+
+
+def draw_neighbor_distances(image, markers):
+    """
+    角度順に並べた隣同士のマーカー距離を描画する。
+    距離の単位は pixel。
+    """
+
+    if len(markers) < 2:
+        return image
+
+    markers_sorted = sorted(markers, key=lambda m: m["angle"])
+    n = len(markers_sorted)
+
+    for i in range(n):
+        m1 = markers_sorted[i]
+        m2 = markers_sorted[(i + 1) % n]
+
+        x1, y1 = m1["center"]
+        x2, y2 = m2["center"]
+
+        dist = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
+
+        mx = int((x1 + x2) / 2)
+        my = int((y1 + y2) / 2)
+
+        cv2.line(image, (x1, y1), (x2, y2), (255, 255, 0), 1)
+
+        cv2.putText(
+            image,
+            f"{dist:.1f}px",
+            (mx, my),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (255, 255, 0),
+            1
+        )
+
+        if dist > MISSING_CELL_DISTANCE_THRESHOLD:
+            cv2.putText(
+                image,
+                "skip",
+                (mx, my + 18),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.45,
+                (0, 0, 255),
+                1
+            )
+
+    return image
+
+
+def calculate_overall_circularity(markers):
+    if len(markers) < 3:
+        return None
+
+    points = np.array(
+        [m["center"] for m in sorted(markers, key=lambda item: item["angle"])],
+        dtype=np.float32
+    )
+    area = cv2.contourArea(points)
+    perimeter = cv2.arcLength(points, True)
+
+    if perimeter == 0:
+        return None
+
+    return 4 * math.pi * area / (perimeter ** 2)
+
+
+def draw_circularity_label(image, markers):
+    circularity = calculate_overall_circularity(markers)
+    if circularity is None:
+        return image
+
+    _, width = image.shape[:2]
+    x = max(10, width - 185)
+    y = 30
+
+    cv2.putText(
+        image,
+        f"Circularity: {circularity:.3f}",
+        (x, y),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.55,
+        (255, 255, 255),
+        2
+    )
+
+    return image
 
 
 def process_frame(image):
@@ -163,8 +273,8 @@ def process_frame(image):
 
     candidates = []
 
-    for center_r, r_r in red_circles:
-        for center_g, r_g in green_circles:
+    for center_r, r_r, area_r in red_circles:
+        for center_g, r_g, area_g in green_circles:
             dist = np.linalg.norm(np.array(center_r) - np.array(center_g))
 
             small_r = min(r_r, r_g)
@@ -179,7 +289,9 @@ def process_frame(image):
                     "center": (cx, cy),
                     "outer_radius": large_r,
                     "red": (center_r, r_r),
-                    "green": (center_g, r_g)
+                    "green": (center_g, r_g),
+                    "red_area": area_r,
+                    "green_area": area_g
                 })
 
     final_candidates = []
@@ -211,6 +323,8 @@ def process_frame(image):
             "outer_radius": outer_radius,
             "red": cand["red"],
             "green": cand["green"],
+            "red_area": cand["red_area"],
+            "green_area": cand["green_area"],
             "type": marker_type,
             "inner_color": inner_color,
             "middle_color": middle_color,
@@ -220,7 +334,12 @@ def process_frame(image):
             "angle_deg": 0
         })
 
+    markers = correct_id1_id9_by_red_area(markers)
+
     markers, hid_center = assign_ids_by_order(markers)
+
+    image = draw_neighbor_distances(image, markers)
+    image = draw_circularity_label(image, markers)
 
     if hid_center is not None:
         hx, hy = int(hid_center[0]), int(hid_center[1])
@@ -271,6 +390,16 @@ def process_frame(image):
             2
         )
 
+        cv2.putText(
+            image,
+            f"red:{m['red_area']:.0f}",
+            (center[0] - 35, center[1] + 45),
+            cv2.FONT_HERSHEY_SIMPLEX,
+            0.45,
+            (0, 0, 255),
+            1
+        )
+
     return image, markers
 
 
@@ -281,12 +410,13 @@ MAX_CENTER_DISTANCE = 8
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
+MISSING_CELL_DISTANCE_THRESHOLD = 150
 
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "mp4_input/test4.mov"
-output_video_path = "mp4_output/output_marker_result4.mp4"
+input_video_path = "mp4_input/test3.mov"
+output_video_path = "mp4_output/output_marker_result7.mp4"
 
 cap = cv2.VideoCapture(input_video_path)
 
