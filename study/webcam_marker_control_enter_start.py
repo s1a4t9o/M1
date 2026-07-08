@@ -21,9 +21,14 @@ MAX_TRACK_DISTANCE = 50
 COMMAND_INTERVAL_SEC = 2.0
 
 # =========================
-# 入出力動画
+# Webカメラ設定
 # =========================
-input_video_path = "mp4_input/test4.mov"
+CAMERA_INDEX = 0          # 通常は0。別のカメラなら1, 2...
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+
+# 処理結果を動画保存するか
+SAVE_OUTPUT_VIDEO = False
 output_video_path = "mp4_output/output_marker_control.mp4"
 
 
@@ -51,7 +56,7 @@ def get_color_name(hsv_pixel):
     if (0 <= h <= 5) or (177 <= h <= 180):
         return "red"
 
-    if 55 <= h <= 80:
+    if 55 <= h <= 90:
         return "green"
 
     return "unknown"
@@ -614,26 +619,38 @@ def process_frame(image, prev_id_positions):
     return image, markers, circularity, id_positions
 
 
-cap = cv2.VideoCapture(input_video_path)
+cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
 if not cap.isOpened():
-    raise FileNotFoundError(f"動画が開けません: {input_video_path}")
+    raise RuntimeError(f"Webカメラが開けません。CAMERA_INDEX={CAMERA_INDEX} を確認してください")
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = cap.get(cv2.CAP_PROP_FPS)
 
-if fps == 0:
+if fps <= 0:
     fps = 30
 
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+writer = None
 
-writer = cv2.VideoWriter(
-    output_video_path,
-    fourcc,
-    fps,
-    (width, height)
-)
+if SAVE_OUTPUT_VIDEO:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        output_video_path,
+        fourcc,
+        fps,
+        (width, height)
+    )
+
+print(f"Webカメラ準備完了: {width}x{height}, FPS={fps:.1f}")
+print("Enterキーを押すと回転モードを開始します")
+input()
+
+print("回転モード開始")
+print("ESCキーで終了します")
 
 
 step1_cleared = False
@@ -664,16 +681,64 @@ while True:
         prev_id_positions
     )
 
-    writer.write(processed_frame)
+    if writer is not None:
+        writer.write(processed_frame)
+
     cv2.imshow("marker result", processed_frame)
 
     if not step1_cleared:
-        if circularity is not None and circularity > CIRCULARITY_THRESHOLD:
+        valid_marker_count = sum(
+            1 for m in markers
+            if m["assigned_id"] != -1
+        )
+
+        # 検出マーカーが5個未満の場合はHIDASとして扱わない
+        if valid_marker_count < 5:
+            cv2.putText(
+                processed_frame,
+                "HIDAS NOT FOUND",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+
+            if not step1_instruction_printed:
+                print("HIDASが見つかりません")
+                step1_instruction_printed = True
+
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        # 5個以上検出できた場合は、従来どおり円形度で加圧/回転開始を判断
+        if circularity is None:
+            cv2.putText(
+                processed_frame,
+                "CIRCULARITY ERROR",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        if circularity > CIRCULARITY_THRESHOLD:
             print("回転開始")
             step1_cleared = True
         else:
             if not step1_instruction_printed:
-                print("加圧してください")
+                print("HIDASを加圧してください")
                 step1_instruction_printed = True
 
             if cv2.waitKey(1) & 0xFF == 27:

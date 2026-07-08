@@ -12,6 +12,18 @@ RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
 
+# =========================
+# HSV色閾値
+# =========================
+lower_red1 = np.array([0,   100,   0])
+upper_red1 = np.array([5,   255, 255])
+
+lower_red2 = np.array([170, 100,   0])
+upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため
+
+lower_green = np.array([55,  60,   0])
+upper_green = np.array([90, 255, 255])
+
 CIRCULARITY_THRESHOLD = 0.9
 TARGET_ANGLE_DEG = -30
 
@@ -21,9 +33,14 @@ MAX_TRACK_DISTANCE = 50
 COMMAND_INTERVAL_SEC = 2.0
 
 # =========================
-# 入出力動画
+# Webカメラ設定
 # =========================
-input_video_path = "mp4_input/test4.mov"
+CAMERA_INDEX = 0          # 通常は0。別のカメラなら1, 2...
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+
+# 処理結果を動画保存するか
+SAVE_OUTPUT_VIDEO = False
 output_video_path = "mp4_output/output_marker_control.mp4"
 
 
@@ -48,10 +65,10 @@ def get_color_name(hsv_pixel):
     if s < 50 or v < 50:
         return "unknown"
 
-    if (0 <= h <= 5) or (177 <= h <= 180):
+    if (lower_red1[0] <= h <= upper_red1[0]) or (lower_red2[0] <= h <= upper_red2[0]):
         return "red"
 
-    if 55 <= h <= 80:
+    if lower_green[0] <= h <= upper_green[0]:
         return "green"
 
     return "unknown"
@@ -476,11 +493,11 @@ def draw_circularity_label(image, circularity):
 def process_frame(image, prev_id_positions):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    red1 = cv2.inRange(hsv, (0, 100, 0), (5, 255, 255))
-    red2 = cv2.inRange(hsv, (177, 100, 0), (180, 255, 255))
+    red1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    red2 = cv2.inRange(hsv, lower_red2, upper_red2)
     red_mask = cv2.bitwise_or(red1, red2)
 
-    green_mask = cv2.inRange(hsv, (40, 60, 0), (80, 255, 255))
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
     red_circles = find_circles(red_mask, MIN_AREA)
     green_circles = find_circles(green_mask, MIN_AREA)
@@ -614,26 +631,38 @@ def process_frame(image, prev_id_positions):
     return image, markers, circularity, id_positions
 
 
-cap = cv2.VideoCapture(input_video_path)
+cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
 if not cap.isOpened():
-    raise FileNotFoundError(f"動画が開けません: {input_video_path}")
+    raise RuntimeError(f"Webカメラが開けません。CAMERA_INDEX={CAMERA_INDEX} を確認してください")
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = cap.get(cv2.CAP_PROP_FPS)
 
-if fps == 0:
+if fps <= 0:
     fps = 30
 
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+writer = None
 
-writer = cv2.VideoWriter(
-    output_video_path,
-    fourcc,
-    fps,
-    (width, height)
-)
+if SAVE_OUTPUT_VIDEO:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        output_video_path,
+        fourcc,
+        fps,
+        (width, height)
+    )
+
+print(f"Webカメラ準備完了: {width}x{height}, FPS={fps:.1f}")
+print("Enterキーを押すと回転モードを開始します")
+input()
+
+print("回転モード開始")
+print("ESCキーで終了します")
 
 
 step1_cleared = False
@@ -664,16 +693,64 @@ while True:
         prev_id_positions
     )
 
-    writer.write(processed_frame)
+    if writer is not None:
+        writer.write(processed_frame)
+
     cv2.imshow("marker result", processed_frame)
 
     if not step1_cleared:
-        if circularity is not None and circularity > CIRCULARITY_THRESHOLD:
+        valid_marker_count = sum(
+            1 for m in markers
+            if m["assigned_id"] != -1
+        )
+
+        # 検出マーカーが5個未満の場合はHIDASとして扱わない
+        if valid_marker_count < 5:
+            cv2.putText(
+                processed_frame,
+                "HIDAS NOT FOUND",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+
+            if not step1_instruction_printed:
+                print("HIDASが見つかりません")
+                step1_instruction_printed = True
+
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        # 5個以上検出できた場合は、従来どおり円形度で加圧/回転開始を判断
+        if circularity is None:
+            cv2.putText(
+                processed_frame,
+                "CIRCULARITY ERROR",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        if circularity > CIRCULARITY_THRESHOLD:
             print("回転開始")
             step1_cleared = True
         else:
             if not step1_instruction_printed:
-                print("加圧してください")
+                print("HIDASを加圧してください")
                 step1_instruction_printed = True
 
             if cv2.waitKey(1) & 0xFF == 27:
