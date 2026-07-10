@@ -1,3 +1,5 @@
+#WebカメラでHIDASのマーカーを検出し、回転モードの指示を出すプログラム
+
 import cv2
 import numpy as np
 import math
@@ -12,18 +14,36 @@ RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
 
-CIRCULARITY_THRESHOLD = 0.9
+# =========================
+# HSV色閾値
+# =========================
+lower_red1 = np.array([0,   80,   0])
+upper_red1 = np.array([20,   255, 255])
+
+lower_red2 = np.array([170, 80,   0])
+upper_red2 = np.array([180, 255, 255])
+
+lower_green = np.array([55,  30,   0])
+upper_green = np.array([90, 255, 255])
+
+CIRCULARITY_THRESHOLD = 0.85
 TARGET_ANGLE_DEG = -30
 
 MAX_START_ID_JUMP = 3
 MAX_TRACK_DISTANCE = 50
 
-COMMAND_INTERVAL_SEC = 2.0
+COMMAND_INTERVAL_SEC = 3.0
+DEPRESSURIZE_INTERVAL_SEC = 10.0
 
 # =========================
-# 入出力動画
+# Webカメラ設定
 # =========================
-input_video_path = "mp4_input/test.MOV"
+CAMERA_INDEX = 0          # 通常は0。別のカメラなら1, 2...
+CAMERA_WIDTH = 640
+CAMERA_HEIGHT = 480
+
+# 処理結果を動画保存するか
+SAVE_OUTPUT_VIDEO = False
 output_video_path = "mp4_output/output_marker_control.mp4"
 
 
@@ -48,10 +68,10 @@ def get_color_name(hsv_pixel):
     if s < 50 or v < 50:
         return "unknown"
 
-    if (0 <= h <= 5) or (177 <= h <= 180):
+    if (lower_red1[0] <= h <= upper_red1[0]) or (lower_red2[0] <= h <= upper_red2[0]):
         return "red"
 
-    if 55 <= h <= 80:
+    if lower_green[0] <= h <= upper_green[0]:
         return "green"
 
     return "unknown"
@@ -336,9 +356,9 @@ def capture_motion_reference(markers):
     }
 
 
-def get_motion_result(markers, motion_reference):
+def print_motion_result(markers, motion_reference):
     if motion_reference is None:
-        return None
+        return
 
     valid_markers = [
         m for m in markers
@@ -346,7 +366,7 @@ def get_motion_result(markers, motion_reference):
     ]
 
     if len(valid_markers) == 0:
-        return None
+        return
 
     leftmost = min(valid_markers, key=lambda m: m["center"][0])
 
@@ -355,13 +375,10 @@ def get_motion_result(markers, motion_reference):
     dx = current_x - previous_x
 
     if dx < 0:
-        result_text = f"Movement: Left {abs(dx):.1f} px"
         print(f"左方向に{abs(dx):.1f}px移動しました")
     elif dx > 0:
-        result_text = f"Movement: Right {dx:.1f} px"
         print(f"右方向に{dx:.1f}px移動しました")
     else:
-        result_text = "Movement: 0.0 px"
         print("左右方向の移動はほぼありません")
 
     print("角度変化量:")
@@ -380,27 +397,6 @@ def get_motion_result(markers, motion_reference):
 
         print(f"セル{cell_id}: {angle_diff:.1f}deg")
 
-    return result_text
-
-
-def draw_motion_result(image, motion_result_text):
-    if not motion_result_text:
-        return image
-
-    height, width = image.shape[:2]
-
-    cv2.putText(
-        image,
-        motion_result_text,
-        (20, height - 100),
-        cv2.FONT_HERSHEY_SIMPLEX,
-        0.8,
-        (0, 0, 0),
-        2
-    )
-
-    return image
-
 
 def start_new_sequence(start_id):
     pressurize_cells, depressurize_cells = make_cells_from_start_id(start_id)
@@ -411,13 +407,26 @@ def start_new_sequence(start_id):
         "pressurize_cells": pressurize_cells,
         "sequence_index": 0,
         "last_command_time": 0,
-        "cycle_count": 0
+        "cycle_count": 0,
+        "waiting_after_depressurize": True,
+        "depressurize_command_time": time.time()
     }
 
 
 def run_pressurize_sequence(sequence_state):
     if sequence_state is None:
         return sequence_state, False
+
+    now = time.time()
+
+    if sequence_state.get("waiting_after_depressurize", False):
+        depressurize_command_time = sequence_state["depressurize_command_time"]
+
+        if now - depressurize_command_time < DEPRESSURIZE_INTERVAL_SEC:
+            return sequence_state, False
+
+        sequence_state["waiting_after_depressurize"] = False
+        sequence_state["last_command_time"] = 0
 
     pressurize_cells = sequence_state["pressurize_cells"]
     sequence_index = sequence_state["sequence_index"]
@@ -431,8 +440,6 @@ def run_pressurize_sequence(sequence_state):
 
     if len(current_cycle_cells) == 0:
         return sequence_state, False
-
-    now = time.time()
 
     if now - last_command_time < COMMAND_INTERVAL_SEC:
         return sequence_state, False
@@ -500,11 +507,11 @@ def draw_circularity_label(image, circularity):
 def process_frame(image, prev_id_positions):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    red1 = cv2.inRange(hsv, (0, 100, 0), (5, 255, 255))
-    red2 = cv2.inRange(hsv, (177, 100, 0), (180, 255, 255))
+    red1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    red2 = cv2.inRange(hsv, lower_red2, upper_red2)
     red_mask = cv2.bitwise_or(red1, red2)
 
-    green_mask = cv2.inRange(hsv, (40, 60, 0), (80, 255, 255))
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
     red_circles = find_circles(red_mask, MIN_AREA)
     green_circles = find_circles(green_mask, MIN_AREA)
@@ -574,10 +581,38 @@ def process_frame(image, prev_id_positions):
 
     markers = correct_id1_id9_by_red_area(markers)
 
+    # まず、そのフレーム単体でIDを付与する
     markers, hid_center = assign_ids_initial(markers)
 
+    # 前フレームのID位置がある場合は、一度トラッキングでIDを安定化する
+    # ただし、トラッキング結果に assigned_id == -1 が出た場合は、
+    # トラッキング失敗として、そのフレーム単体のID付与に戻す。
     if prev_id_positions is not None:
-        markers, id_positions = stabilize_ids_by_previous_frame(markers, prev_id_positions)
+        tracked_markers, tracked_id_positions = stabilize_ids_by_previous_frame(
+            markers,
+            prev_id_positions
+        )
+
+        tracking_failed = any(m["assigned_id"] == -1 for m in tracked_markers)
+
+        if tracking_failed:
+            # 追跡でIDが付かなかった場合は、前フレーム追跡を捨ててIDを付け直す
+            markers, hid_center = assign_ids_initial(markers)
+            id_positions = build_id_positions(markers)
+
+            cv2.putText(
+                image,
+                "TRACKING FAILED -> REASSIGN ID",
+                (30, 90),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.7,
+                (0, 0, 255),
+                2
+            )
+
+        else:
+            markers = tracked_markers
+            id_positions = tracked_id_positions
     else:
         id_positions = build_id_positions(markers)
 
@@ -638,26 +673,38 @@ def process_frame(image, prev_id_positions):
     return image, markers, circularity, id_positions
 
 
-cap = cv2.VideoCapture(input_video_path)
+cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
 
 if not cap.isOpened():
-    raise FileNotFoundError(f"動画が開けません: {input_video_path}")
+    raise RuntimeError(f"Webカメラが開けません。CAMERA_INDEX={CAMERA_INDEX} を確認してください")
+
+cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
 
 width = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
 height = int(cap.get(cv2.CAP_PROP_FRAME_HEIGHT))
 fps = cap.get(cv2.CAP_PROP_FPS)
 
-if fps == 0:
+if fps <= 0:
     fps = 30
 
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+writer = None
 
-writer = cv2.VideoWriter(
-    output_video_path,
-    fourcc,
-    fps,
-    (width, height)
-)
+if SAVE_OUTPUT_VIDEO:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        output_video_path,
+        fourcc,
+        fps,
+        (width, height)
+    )
+
+print(f"Webカメラ準備完了: {width}x{height}, FPS={fps:.1f}")
+print("Enterキーを押すと回転モードを開始します")
+input()
+
+print("回転モード開始")
+print("ESCキーで終了します")
 
 
 step1_cleared = False
@@ -676,7 +723,8 @@ motion_reference = None
 waiting_for_motion_result = False
 motion_result_wait_start = 0
 
-motion_result_text = ""
+waiting_for_next_cycle = False
+next_cycle_wait_start = 0
 
 
 while True:
@@ -690,18 +738,65 @@ while True:
         prev_id_positions
     )
 
+    if writer is not None:
+        writer.write(processed_frame)
+
+    cv2.imshow("marker result", processed_frame)
+
     if not step1_cleared:
-        if circularity is not None and circularity > CIRCULARITY_THRESHOLD:
+        valid_marker_count = sum(
+            1 for m in markers
+            if m["assigned_id"] != -1
+        )
+
+        # 検出マーカーが5個未満の場合はHIDASとして扱わない
+        if valid_marker_count < 16:
+            cv2.putText(
+                processed_frame,
+                "HIDAS NOT FOUND",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+
+            if not step1_instruction_printed:
+                print("HIDASが見つかりません")
+                step1_instruction_printed = True
+
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        # 5個以上検出できた場合は、従来どおり円形度で加圧/回転開始を判断
+        if circularity is None:
+            cv2.putText(
+                processed_frame,
+                "CIRCULARITY ERROR",
+                (30, 60),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                0.8,
+                (0, 0, 255),
+                2
+            )
+            cv2.imshow("marker result", processed_frame)
+
+            if cv2.waitKey(1) & 0xFF == 27:
+                break
+
+            continue
+
+        if circularity > CIRCULARITY_THRESHOLD:
             print("回転開始")
             step1_cleared = True
         else:
             if not step1_instruction_printed:
-                print("加圧してください")
+                print("HIDASを加圧してください")
                 step1_instruction_printed = True
-
-            processed_frame = draw_motion_result(processed_frame, motion_result_text)
-            writer.write(processed_frame)
-            cv2.imshow("marker result", processed_frame)
 
             if cv2.waitKey(1) & 0xFF == 27:
                 break
@@ -736,7 +831,7 @@ while True:
             if jump < MAX_START_ID_JUMP:
                 pending_start_id = new_start_id
 
-    if not waiting_for_motion_result:
+    if not waiting_for_motion_result and not waiting_for_next_cycle:
         sequence_state, one_cycle_finished = run_pressurize_sequence(sequence_state)
     else:
         one_cycle_finished = False
@@ -749,29 +844,30 @@ while True:
         now = time.time()
 
         if now - motion_result_wait_start >= COMMAND_INTERVAL_SEC:
-            new_motion_result_text = get_motion_result(markers, motion_reference)
+            print_motion_result(markers, motion_reference)
 
-            if new_motion_result_text is not None:
-                motion_result_text = new_motion_result_text
+            motion_reference = capture_motion_reference(markers)
 
+            waiting_for_motion_result = False
+            waiting_for_next_cycle = True
+            next_cycle_wait_start = time.time()
+
+    if waiting_for_next_cycle:
+        now = time.time()
+
+        if now - next_cycle_wait_start >= COMMAND_INTERVAL_SEC:
             if pending_start_id is not None:
                 current_start_id = pending_start_id
                 sequence_state = start_new_sequence(current_start_id)
                 pending_start_id = None
 
-            motion_reference = capture_motion_reference(markers)
-
-            waiting_for_motion_result = False
-
-    processed_frame = draw_motion_result(processed_frame, motion_result_text)
-
-    writer.write(processed_frame)
-    cv2.imshow("marker result", processed_frame)
+            waiting_for_next_cycle = False
 
     if cv2.waitKey(1) & 0xFF == 27:
         break
 
 
 cap.release()
-writer.release()
+if writer is not None:
+    writer.release()
 cv2.destroyAllWindows()

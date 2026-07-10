@@ -1,3 +1,5 @@
+#HIDASのマーカーを検出し、回転モードの指示を出すプログラム（入力：動画）
+
 import cv2
 import numpy as np
 import math
@@ -23,7 +25,7 @@ COMMAND_INTERVAL_SEC = 2.0
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "mp4_input/test4.mov"
+input_video_path = "mp4_input/test4.MOV"
 output_video_path = "mp4_output/output_marker_control.mp4"
 
 
@@ -336,9 +338,9 @@ def capture_motion_reference(markers):
     }
 
 
-def print_motion_result(markers, motion_reference):
+def get_motion_result(markers, motion_reference):
     if motion_reference is None:
-        return
+        return None
 
     valid_markers = [
         m for m in markers
@@ -346,7 +348,7 @@ def print_motion_result(markers, motion_reference):
     ]
 
     if len(valid_markers) == 0:
-        return
+        return None
 
     leftmost = min(valid_markers, key=lambda m: m["center"][0])
 
@@ -355,10 +357,13 @@ def print_motion_result(markers, motion_reference):
     dx = current_x - previous_x
 
     if dx < 0:
+        result_text = f"Movement: Left {abs(dx):.1f} px"
         print(f"左方向に{abs(dx):.1f}px移動しました")
     elif dx > 0:
+        result_text = f"Movement: Right {dx:.1f} px"
         print(f"右方向に{dx:.1f}px移動しました")
     else:
+        result_text = "Movement: 0.0 px"
         print("左右方向の移動はほぼありません")
 
     print("角度変化量:")
@@ -376,6 +381,27 @@ def print_motion_result(markers, motion_reference):
         )
 
         print(f"セル{cell_id}: {angle_diff:.1f}deg")
+
+    return result_text
+
+
+def draw_motion_result(image, motion_result_text):
+    if not motion_result_text:
+        return image
+
+    height, width = image.shape[:2]
+
+    cv2.putText(
+        image,
+        motion_result_text,
+        (20, height - 100),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 0),
+        2
+    )
+
+    return image
 
 
 def start_new_sequence(start_id):
@@ -652,6 +678,8 @@ motion_reference = None
 waiting_for_motion_result = False
 motion_result_wait_start = 0
 
+motion_result_text = ""
+
 
 while True:
     ret, frame = cap.read()
@@ -664,9 +692,6 @@ while True:
         prev_id_positions
     )
 
-    writer.write(processed_frame)
-    cv2.imshow("marker result", processed_frame)
-
     if not step1_cleared:
         if circularity is not None and circularity > CIRCULARITY_THRESHOLD:
             print("回転開始")
@@ -675,6 +700,10 @@ while True:
             if not step1_instruction_printed:
                 print("加圧してください")
                 step1_instruction_printed = True
+
+            processed_frame = draw_motion_result(processed_frame, motion_result_text)
+            writer.write(processed_frame)
+            cv2.imshow("marker result", processed_frame)
 
             if cv2.waitKey(1) & 0xFF == 27:
                 break
@@ -722,7 +751,10 @@ while True:
         now = time.time()
 
         if now - motion_result_wait_start >= COMMAND_INTERVAL_SEC:
-            print_motion_result(markers, motion_reference)
+            new_motion_result_text = get_motion_result(markers, motion_reference)
+
+            if new_motion_result_text is not None:
+                motion_result_text = new_motion_result_text
 
             if pending_start_id is not None:
                 current_start_id = pending_start_id
@@ -732,6 +764,11 @@ while True:
             motion_reference = capture_motion_reference(markers)
 
             waiting_for_motion_result = False
+
+    processed_frame = draw_motion_result(processed_frame, motion_result_text)
+
+    writer.write(processed_frame)
+    cv2.imshow("marker result", processed_frame)
 
     if cv2.waitKey(1) & 0xFF == 27:
         break

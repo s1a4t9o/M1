@@ -1,3 +1,5 @@
+#WebカメラでHIDASのマーカーを検出し、回転モードの指示を出すプログラム
+
 import cv2
 import numpy as np
 import math
@@ -19,12 +21,13 @@ lower_red1 = np.array([0,   100,   0])
 upper_red1 = np.array([5,   255, 255])
 
 lower_red2 = np.array([170, 100,   0])
-upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため
+upper_red2 = np.array([180, 255, 255])
+
 
 lower_green = np.array([55,  60,   0])
 upper_green = np.array([90, 255, 255])
 
-CIRCULARITY_THRESHOLD = 0.9
+CIRCULARITY_THRESHOLD = 0.85
 TARGET_ANGLE_DEG = -30
 
 MAX_START_ID_JUMP = 3
