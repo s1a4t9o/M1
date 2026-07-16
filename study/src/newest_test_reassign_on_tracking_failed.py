@@ -711,7 +711,6 @@ step1_cleared = False
 step1_instruction_printed = False
 step2_first_output_done = False
 
-previous_over_ids = set()
 current_start_id = None
 
 prev_id_positions = None
@@ -810,26 +809,7 @@ while True:
             sequence_state = start_new_sequence(current_start_id)
             motion_reference = capture_motion_reference(markers)
 
-            previous_over_ids = set(
-                m["assigned_id"] for m in markers
-                if m["assigned_id"] != -1 and m["angle_deg"] > TARGET_ANGLE_DEG
-            )
-
             step2_first_output_done = True
-
-    else:
-        new_start_id, current_over_ids = find_new_over_start_id(
-            markers,
-            previous_over_ids
-        )
-
-        previous_over_ids = current_over_ids
-
-        if new_start_id is not None and new_start_id != current_start_id:
-            jump = cell_distance_circular(current_start_id, new_start_id)
-
-            if jump < MAX_START_ID_JUMP:
-                pending_start_id = new_start_id
 
     if not waiting_for_motion_result and not waiting_for_next_cycle:
         sequence_state, one_cycle_finished = run_pressurize_sequence(sequence_state)
@@ -837,6 +817,15 @@ while True:
         one_cycle_finished = False
 
     if one_cycle_finished:
+        # 1サイクル終了時点の最新角度から、次の開始セル候補を決める
+        latest_start_id = find_initial_start_id(markers)
+
+        if latest_start_id is not None and latest_start_id != current_start_id:
+            jump = cell_distance_circular(current_start_id, latest_start_id)
+
+            if jump < MAX_START_ID_JUMP:
+                pending_start_id = latest_start_id
+
         waiting_for_motion_result = True
         motion_result_wait_start = time.time()
 
