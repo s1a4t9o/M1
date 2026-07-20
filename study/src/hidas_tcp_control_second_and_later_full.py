@@ -33,10 +33,10 @@ TARGET_ANGLE_DEG = -30
 MAX_START_ID_JUMP = 3
 MAX_TRACK_DISTANCE = 50
 
-COMMAND_INTERVAL_SEC = 4.0  # 通常の加圧時間
+COMMAND_INTERVAL_SEC = 3.0  # 通常の加圧時間
 FIRST_CELL_FROM_SECOND_SEQUENCE_SEC = 15.0  # 2サイクル目以降、各サイクル最初の加圧だけに使う時間
 IDLE_INTERVAL_SEC = 1.0  # Idle指示後、次の加圧までの待ち時間
-DEPRESSURIZE_INTERVAL_SEC = 4.0  # 減圧時間
+DEPRESSURIZE_INTERVAL_SEC = 3.0  # 減圧時間
 
 # =========================
 # TCP通信設定
