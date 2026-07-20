@@ -4,15 +4,16 @@ import cv2
 import numpy as np
 import math
 import time
+import socket
 
 
 # =========================
 # パラメータ
 # =========================
-MAX_CENTER_DISTANCE = 8
+MAX_CENTER_DISTANCE = 5
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
-MIN_AREA = 15
+MIN_AREA = 18
 
 # =========================
 # HSV色閾値
@@ -32,10 +33,25 @@ TARGET_ANGLE_DEG = -30
 MAX_START_ID_JUMP = 3
 MAX_TRACK_DISTANCE = 50
 
-COMMAND_INTERVAL_SEC = 3.0  # 通常の加圧時間
-SECOND_SEQUENCE_FIRST_CELL_SEC = 15.0  # 2サイクル目の最初の加圧だけに使う時間
+COMMAND_INTERVAL_SEC = 4.0  # 通常の加圧時間
+FIRST_CELL_FROM_SECOND_SEQUENCE_SEC = 15.0  # 2サイクル目以降、各サイクル最初の加圧だけに使う時間
 IDLE_INTERVAL_SEC = 1.0  # Idle指示後、次の加圧までの待ち時間
-DEPRESSURIZE_INTERVAL_SEC = 10.0  # 減圧時間
+DEPRESSURIZE_INTERVAL_SEC = 4.0  # 減圧時間
+
+# =========================
+# TCP通信設定
+# =========================
+HOST = "127.0.0.1"
+PORT = 60001
+SOCKET_TIMEOUT_SEC = 5.0
+
+# 1セルあたりの3桁の動作番号
+CELL_IDLE = "000"
+CELL_INF = "111"
+CELL_VENT = "222"
+
+# 接続済みソケットを保持する
+hidas_sock = None
 
 # =========================
 # Webカメラ設定
@@ -47,6 +63,93 @@ CAMERA_HEIGHT = 480
 # 処理結果を動画保存するか
 SAVE_OUTPUT_VIDEO = False
 output_video_path = "mp4_output/output_marker_control.mp4"
+
+
+def connect_hidas():
+    """HIDAS制御サーバーへTCP接続する。"""
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.settimeout(SOCKET_TIMEOUT_SEC)
+
+    print(f"{HOST}:{PORT} に接続します")
+    sock.connect((HOST, PORT))
+    print("TCP接続成功")
+
+    return sock
+
+
+def make_cmb_command(pressurize_cells=None, depressurize_cells=None):
+    """
+    16セル分のCMBコマンドを作る。
+
+    加圧セル      : 111
+    減圧セル      : 222
+    それ以外      : 000
+    """
+    pressurize_set = set(pressurize_cells or [])
+    depressurize_set = set(depressurize_cells or [])
+
+    duplicate_cells = pressurize_set & depressurize_set
+    if duplicate_cells:
+        raise ValueError(
+            f"加圧と減圧の両方に指定されたセルがあります: "
+            f"{sorted(duplicate_cells)}"
+        )
+
+    all_cells = pressurize_set | depressurize_set
+    invalid_cells = sorted(
+        cell_id for cell_id in all_cells
+        if not 1 <= cell_id <= 16
+    )
+    if invalid_cells:
+        raise ValueError(
+            f"セル番号は1～16で指定してください: {invalid_cells}"
+        )
+
+    states = []
+
+    for cell_id in range(1, 17):
+        if cell_id in pressurize_set:
+            states.append(CELL_INF)
+        elif cell_id in depressurize_set:
+            states.append(CELL_VENT)
+        else:
+            states.append(CELL_IDLE)
+
+    return "CMB " + " ".join(states)
+
+
+def send_hidas_command(command):
+    """CMBコマンドを送信し、応答があれば表示する。"""
+    global hidas_sock
+
+    if hidas_sock is None:
+        raise RuntimeError("HIDASとのTCP接続がありません")
+
+    message = command.rstrip("\n") + "\n"
+    hidas_sock.sendall(message.encode("utf-8"))
+    print(f"送信: {command}")
+
+    try:
+        response = hidas_sock.recv(8192)
+        if response:
+            print(f"受信: {response.decode('utf-8', errors='replace').strip()}")
+    except socket.timeout:
+        # 応答を返さないサーバーでも制御を継続できるようにする
+        print("受信: タイムアウト（応答なし）")
+
+
+def send_cell_command(pressurize_cells=None, depressurize_cells=None):
+    """セル指定からCMBコマンドを作成して送信する。"""
+    command = make_cmb_command(
+        pressurize_cells=pressurize_cells,
+        depressurize_cells=depressurize_cells
+    )
+    send_hidas_command(command)
+
+
+def send_all_idle():
+    """全16セルをIdleにする。"""
+    send_cell_command()
 
 
 def find_circles(mask, MIN_AREA):
@@ -411,9 +514,14 @@ def start_new_sequence(start_id, sequence_number):
     pressurize_cells, depressurize_cells = make_cells_from_start_id(start_id)
 
     print(f"セル{depressurize_cells}を減圧してください")
+    send_cell_command(depressurize_cells=depressurize_cells)
 
     return {
         "pressurize_cells": pressurize_cells,
+
+        # 次の減圧指示が出るまで、この減圧状態を維持する
+        "depressurize_cells": depressurize_cells,
+
         "sequence_index": 0,
         "cycle_count": 0,
         "waiting_after_depressurize": True,
@@ -442,7 +550,7 @@ def run_pressurize_sequence(sequence_state):
         ↓ IDLE_INTERVAL_SEC 秒間待機
     次のセルの加圧指示
 
-    2サイクル目のみ、本当の最初の加圧だけを長くする。
+    2サイクル目以降は、各サイクルの本当の最初の加圧だけを長くする。
     同じサイクル内の2回目以降の加圧は通常時間とする。
 
     戻り値のone_cycle_finishedは、内部の加圧セル列を1周し、
@@ -463,6 +571,7 @@ def run_pressurize_sequence(sequence_state):
         sequence_state["waiting_after_depressurize"] = False
 
     pressurize_cells = sequence_state["pressurize_cells"]
+    depressurize_cells = sequence_state["depressurize_cells"]
     sequence_index = sequence_state["sequence_index"]
     cycle_count = sequence_state["cycle_count"]
     active_cell = sequence_state["active_pressurize_cell"]
@@ -485,6 +594,12 @@ def run_pressurize_sequence(sequence_state):
 
         # 加圧時間終了後、必ず同じセルをIdleに戻す
         print(f"セル{active_cell}をアイドル状態にしてください")
+
+        # 加圧していたセルだけをIdleに戻し、
+        # 減圧対象セルは222のまま維持する
+        send_cell_command(
+            depressurize_cells=depressurize_cells
+        )
 
         sequence_state["active_pressurize_cell"] = None
         sequence_state["pressurize_start_time"] = None
@@ -520,17 +635,24 @@ def run_pressurize_sequence(sequence_state):
     current_sequence_index = sequence_state["sequence_index"]
     cell_id = current_cycle_cells[current_sequence_index]
 
-    # 減圧指示を基準とした2サイクル目で、
-    # まだ一度も加圧していない場合だけ長くする。
+    # 減圧指示を基準とした2サイクル目以降で、
+    # そのサイクル内でまだ一度も加圧していない場合だけ長くする。
     if (
-        sequence_state["sequence_number"] == 2
+        sequence_state["sequence_number"] >= 2
         and not sequence_state["first_pressurize_done"]
     ):
-        pressurize_duration = SECOND_SEQUENCE_FIRST_CELL_SEC
+        pressurize_duration = FIRST_CELL_FROM_SECOND_SEQUENCE_SEC
     else:
         pressurize_duration = COMMAND_INTERVAL_SEC
 
     print(f"セル{cell_id}を加圧してください")
+
+    # 現在の加圧セルを111にしながら、
+    # 減圧対象セルは222のまま維持する
+    send_cell_command(
+        pressurize_cells=[cell_id],
+        depressurize_cells=depressurize_cells
+    )
 
     sequence_state["active_pressurize_cell"] = cell_id
     sequence_state["pressurize_start_time"] = now
@@ -778,6 +900,15 @@ print(f"Webカメラ準備完了: {width}x{height}, FPS={fps:.1f}")
 print("Enterキーを押すと回転モードを開始します")
 input()
 
+try:
+    hidas_sock = connect_hidas()
+except OSError as exc:
+    cap.release()
+    if writer is not None:
+        writer.release()
+    cv2.destroyAllWindows()
+    raise RuntimeError(f"HIDASにTCP接続できませんでした: {exc}") from exc
+
 print("回転モード開始")
 print("ESCキーで終了します")
 
@@ -868,11 +999,16 @@ while True:
             continue
 
         if circularity > CIRCULARITY_THRESHOLD:
+            if step1_instruction_printed:
+                print("全セルをアイドル状態にします")
+                send_all_idle()
+
             print("回転開始")
             step1_cleared = True
         else:
             if not step1_instruction_printed:
                 print("HIDASを加圧してください")
+                send_cell_command(pressurize_cells=list(range(1, 17)))
                 step1_instruction_printed = True
 
             if cv2.waitKey(1) & 0xFF == 27:

@@ -9,10 +9,10 @@ import time
 # =========================
 # パラメータ
 # =========================
-MAX_CENTER_DISTANCE = 8
+MAX_CENTER_DISTANCE = 5
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
-MIN_AREA = 15
+MIN_AREA = 17
 
 # =========================
 # HSV色閾値
