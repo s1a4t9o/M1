@@ -1,4 +1,5 @@
 import socket
+import time
 
 HOST = "127.0.0.1"
 PORT = 60001
@@ -13,7 +14,17 @@ def main():
             print("接続成功")
 
             # 状態取得コマンド
-            message = "CMA\n"
+            message = "CMB 000 100 002 000 200 100 000 000 000 000 000 000 000 000 001 000\n"
+            sock.sendall(message.encode("utf-8"))
+            print(f"送信: {message.strip()}")
+
+            response = sock.recv(8192).decode("utf-8")
+            print(f"受信: {response.strip()}")
+
+            time.sleep(10)
+
+            # 状態取得コマンド
+            message = "CMB 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000\n"
             sock.sendall(message.encode("utf-8"))
             print(f"送信: {message.strip()}")
 
