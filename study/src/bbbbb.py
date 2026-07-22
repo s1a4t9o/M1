@@ -14,6 +14,14 @@ RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
 
+# === HSV 色範囲 ===
+lower_red1 = np.array([0,   100,   0])
+upper_red1 = np.array([5,   255, 255])
+lower_red2 = np.array([170, 100,   0])
+upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため 170 から
+lower_green = np.array([40,  60,   0])
+upper_green = np.array([100, 255, 255])
+
 CIRCULARITY_THRESHOLD = 0.9
 TARGET_ANGLE_DEG = -30
 
@@ -22,11 +30,22 @@ MAX_TRACK_DISTANCE = 50
 
 COMMAND_INTERVAL_SEC = 2.0
 
+# 各区間の実測長[cm]
+# 真下区間の検出順：ID1→ID16, ID16→ID15, ... , ID2→ID1
+# 現在はすべて34 cm。実測後に各値を書き換えてください。
+CELL_INTERVAL_LENGTH_CM = 34.0
+NOMINAL_CELL_ANGLE_DEG = 360.0 / 16.0
+MAX_FRAME_TRAVEL_INTERVALS = 0.30
+MIN_COMMON_MARKERS_FOR_TRAVEL = 6
+
+# HIDAS中心から見た画像下方向の角度
+BOTTOM_ANGLE_DEG = -90.0
+
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "../mp4_input/test4.MOV"
-output_video_path = "../mp4_output/output_marker_control.mp4"
+input_video_path = "../mp4_input/test8.mp4"
+output_video_path = "../mp4_output/output_marker_control_direction_fixed.mp4"
 
 
 def find_circles(mask, MIN_AREA):
@@ -50,10 +69,10 @@ def get_color_name(hsv_pixel):
     if s < 50 or v < 50:
         return "unknown"
 
-    if (0 <= h <= 5) or (177 <= h <= 180):
+    if (lower_red1[0] <= h <= upper_red1[0]) or (lower_red2[0] <= h <= upper_red2[0]):
         return "red"
 
-    if 55 <= h <= 80:
+    if lower_green[0] <= h <= upper_green[0]:
         return "green"
 
     return "unknown"
@@ -315,6 +334,135 @@ def normalize_angle_diff(diff):
     return diff
 
 
+
+def get_bottom_continuous_position(markers):
+    """
+    真下を挟む隣接2マーカーと、その区間内での割合を求める。
+
+    連続位置の定義:
+      0.0～1.0   : ID1 → ID16 の区間
+      1.0～2.0   : ID16 → ID15 の区間
+      ...
+      15.0～16.0 : ID2 → ID1 の区間
+
+    fraction=0.0 は区間始点側、1.0 は区間終点側。
+    """
+    marker_by_id = {
+        m["assigned_id"]: m
+        for m in markers
+        if m["assigned_id"] != -1
+    }
+
+    for interval_index in range(16):
+        start_id = ((1 - interval_index - 1) % 16) + 1
+        end_id = ((1 - (interval_index + 1) - 1) % 16) + 1
+
+        if start_id not in marker_by_id or end_id not in marker_by_id:
+            continue
+
+        start_marker = marker_by_id[start_id]
+        end_marker = marker_by_id[end_id]
+        start_angle = start_marker["angle_deg"]
+        end_angle = end_marker["angle_deg"]
+
+        interval_angle = (end_angle - start_angle) % 360.0
+        bottom_from_start = (BOTTOM_ANGLE_DEG - start_angle) % 360.0
+
+        # 16セルなので通常は約22.5deg。変形を考慮して90degまで許容する。
+        if interval_angle <= 0.0 or interval_angle > 90.0:
+            continue
+
+        if bottom_from_start <= interval_angle:
+            fraction = bottom_from_start / interval_angle
+            continuous_position = interval_index + fraction
+
+            return {
+                "interval_index": interval_index,
+                "fraction": fraction,
+                "position": continuous_position,
+                "start_id": start_id,
+                "end_id": end_id,
+                "start_marker": start_marker,
+                "end_marker": end_marker,
+            }
+
+    return None
+
+
+def normalize_interval_delta(delta):
+    """16区間の円環上の差を -8～+8区間に正規化する。"""
+    while delta > 8.0:
+        delta -= 16.0
+    while delta <= -8.0:
+        delta += 16.0
+    return delta
+
+
+def get_marker_angle_map(markers):
+    return {
+        m["assigned_id"]: m["angle_deg"]
+        for m in markers
+        if m["assigned_id"] != -1
+    }
+
+
+def update_travel_tracker(markers, previous_angle_by_id, accumulated_intervals):
+    """
+    各フレームにおける全マーカーの角度変化量の中央値から、
+    符号付きの移動区間数を積算する。
+
+    真下区間番号の飛びを直接加算しないため、ID再割当てや
+    区間誤認識による1～2区間の誤加算を防ぐ。
+
+    正方向:
+      HIDASが画像上で左へ進む向き
+    逆方向:
+      HIDASが画像上で右へ進む向き
+    """
+    current_angle_by_id = get_marker_angle_map(markers)
+
+    if len(current_angle_by_id) == 0:
+        return previous_angle_by_id, accumulated_intervals
+
+    if previous_angle_by_id is None:
+        return current_angle_by_id, accumulated_intervals
+
+    common_ids = sorted(
+        set(previous_angle_by_id.keys()) &
+        set(current_angle_by_id.keys())
+    )
+
+    if len(common_ids) < MIN_COMMON_MARKERS_FOR_TRAVEL:
+        return current_angle_by_id, accumulated_intervals
+
+    angle_deltas = []
+
+    for cell_id in common_ids:
+        delta_deg = normalize_angle_diff(
+            current_angle_by_id[cell_id] -
+            previous_angle_by_id[cell_id]
+        )
+
+        # ID付け替えなどで大きく飛んだマーカーは除外
+        if abs(delta_deg) <= NOMINAL_CELL_ANGLE_DEG * 0.75:
+            angle_deltas.append(delta_deg)
+
+    if len(angle_deltas) < MIN_COMMON_MARKERS_FOR_TRAVEL:
+        return current_angle_by_id, accumulated_intervals
+
+    median_angle_delta_deg = float(np.median(angle_deltas))
+
+    # 画像左方向への移動を正とする。
+    # この角度定義では、左へ進むとマーカー角度変化が正になる。
+    frame_interval_delta = median_angle_delta_deg / NOMINAL_CELL_ANGLE_DEG
+
+    # 1フレームで0.30区間を超える値は検出・ID対応の異常として無視
+    if abs(frame_interval_delta) <= MAX_FRAME_TRAVEL_INTERVALS:
+        accumulated_intervals += frame_interval_delta
+
+    return current_angle_by_id, accumulated_intervals
+
+
 def capture_motion_reference(markers):
     valid_markers = [
         m for m in markers
@@ -324,23 +472,23 @@ def capture_motion_reference(markers):
     if len(valid_markers) == 0:
         return None
 
-    leftmost = min(valid_markers, key=lambda m: m["center"][0])
-
     angle_by_id = {
         m["assigned_id"]: m["angle_deg"]
         for m in valid_markers
     }
 
+    bottom_info = get_bottom_continuous_position(valid_markers)
+
     return {
-        "leftmost_x": leftmost["center"][0],
-        "leftmost_id": leftmost["assigned_id"],
+        "bottom_info": bottom_info,
+        "bottom_position": bottom_info["position"] if bottom_info is not None else None,
         "angle_by_id": angle_by_id
     }
 
 
-def get_motion_result(markers, motion_reference):
+def print_angle_changes(markers, motion_reference):
     if motion_reference is None:
-        return None
+        return
 
     valid_markers = [
         m for m in markers
@@ -348,26 +496,9 @@ def get_motion_result(markers, motion_reference):
     ]
 
     if len(valid_markers) == 0:
-        return None
-
-    leftmost = min(valid_markers, key=lambda m: m["center"][0])
-
-    current_x = leftmost["center"][0]
-    previous_x = motion_reference["leftmost_x"]
-    dx = current_x - previous_x
-
-    if dx < 0:
-        result_text = f"Movement: Left {abs(dx):.1f} px"
-        print(f"左方向に{abs(dx):.1f}px移動しました")
-    elif dx > 0:
-        result_text = f"Movement: Right {dx:.1f} px"
-        print(f"右方向に{dx:.1f}px移動しました")
-    else:
-        result_text = "Movement: 0.0 px"
-        print("左右方向の移動はほぼありません")
+        return
 
     print("角度変化量:")
-
     previous_angles = motion_reference["angle_by_id"]
 
     for m in sorted(valid_markers, key=lambda item: item["assigned_id"]):
@@ -379,10 +510,7 @@ def get_motion_result(markers, motion_reference):
         angle_diff = normalize_angle_diff(
             m["angle_deg"] - previous_angles[cell_id]
         )
-
         print(f"セル{cell_id}: {angle_diff:.1f}deg")
-
-    return result_text
 
 
 def draw_motion_result(image, motion_result_text):
@@ -460,17 +588,10 @@ def run_pressurize_sequence(sequence_state):
 
 
 def draw_neighbor_distances(image, markers):
-    """隣り合うマーカーを線で結び、中心間距離をpx表示する。"""
-    valid_markers = [
-        m for m in markers
-        if m["assigned_id"] != -1
-    ]
-
-    if len(valid_markers) < 2:
+    if len(markers) < 2:
         return image
 
-    # HIDAS中心まわりの角度順に並べ、円周上の隣接マーカーを決める
-    markers_sorted = sorted(valid_markers, key=lambda m: m["angle"])
+    markers_sorted = sorted(markers, key=lambda m: m["angle"])
     n = len(markers_sorted)
 
     for i in range(n):
@@ -480,36 +601,7 @@ def draw_neighbor_distances(image, markers):
         x1, y1 = m1["center"]
         x2, y2 = m2["center"]
 
-        # マーカー中心間のユークリッド距離
-        distance_px = math.hypot(x2 - x1, y2 - y1)
-
-        # 隣接マーカーを結ぶ線
         cv2.line(image, (x1, y1), (x2, y2), (255, 255, 0), 1)
-
-        # 線分の中央に距離を表示
-        text_x = int((x1 + x2) / 2)
-        text_y = int((y1 + y2) / 2)
-        distance_text = f"{distance_px:.1f}px"
-
-        # 背景と重なっても読めるように黒い縁取りを付ける
-        cv2.putText(
-            image,
-            distance_text,
-            (text_x - 18, text_y - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            (0, 0, 0),
-            3
-        )
-        cv2.putText(
-            image,
-            distance_text,
-            (text_x - 18, text_y - 5),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.42,
-            (255, 255, 255),
-            1
-        )
 
     return image
 
@@ -535,14 +627,65 @@ def draw_circularity_label(image, circularity):
     return image
 
 
+
+
+def draw_bottom_reference(image, markers, hid_center):
+    if hid_center is None:
+        return image
+
+    hx, hy = int(hid_center[0]), int(hid_center[1])
+    h, _ = image.shape[:2]
+
+    # HIDAS中心から画像下方向へ真下基準線を描画
+    cv2.line(image, (hx, hy), (hx, h - 1), (0, 0, 255), 3)
+
+    bottom_info = get_bottom_continuous_position(markers)
+    if bottom_info is None:
+        return image
+
+    start_marker = bottom_info["start_marker"]
+    end_marker = bottom_info["end_marker"]
+    fraction = bottom_info["fraction"]
+
+    for marker in (start_marker, end_marker):
+        x, y = marker["center"]
+        cv2.circle(image, (x, y), 12, (0, 255, 255), 3)
+        cv2.line(image, (hx, hy), (x, y), (0, 255, 0), 2)
+
+    cv2.line(
+        image,
+        start_marker["center"],
+        end_marker["center"],
+        (255, 0, 255),
+        2
+    )
+
+    cv2.putText(
+        image,
+        f"BOTTOM: ID{bottom_info['start_id']}-ID{bottom_info['end_id']}  {fraction * 100.0:.1f}%",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 255),
+        2
+    )
+
+    return image
+
+
 def process_frame(image, prev_id_positions):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
-    red1 = cv2.inRange(hsv, (0, 100, 0), (5, 255, 255))
-    red2 = cv2.inRange(hsv, (170, 100, 0), (180, 255, 255))
+    red1 = cv2.inRange(hsv, lower_red1, upper_red1)
+    red2 = cv2.inRange(hsv, lower_red2, upper_red2)
     red_mask = cv2.bitwise_or(red1, red2)
+    green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
-    green_mask = cv2.inRange(hsv, (40, 60, 0), (100, 255, 255))
+    kernel = np.ones((3,3), np.uint8)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel)
 
     red_circles = find_circles(red_mask, MIN_AREA)
     green_circles = find_circles(green_mask, MIN_AREA)
@@ -640,6 +783,8 @@ def process_frame(image, prev_id_positions):
             2
         )
 
+        image = draw_bottom_reference(image, markers, hid_center)
+
     for m in markers:
         center = m["center"]
         center_r, r_r = m["red"]
@@ -715,6 +860,9 @@ waiting_for_motion_result = False
 motion_result_wait_start = 0
 
 motion_result_text = ""
+travel_previous_angle_by_id = None
+accumulated_travel_intervals = 0.0
+travel_tracking_started = False
 
 
 while True:
@@ -752,6 +900,9 @@ while True:
         if current_start_id is not None:
             sequence_state = start_new_sequence(current_start_id)
             motion_reference = capture_motion_reference(markers)
+            travel_previous_angle_by_id = get_marker_angle_map(markers)
+            accumulated_travel_intervals = 0.0
+            travel_tracking_started = len(travel_previous_angle_by_id) >= MIN_COMMON_MARKERS_FOR_TRAVEL
 
             previous_over_ids = set(
                 m["assigned_id"] for m in markers
@@ -774,6 +925,13 @@ while True:
             if jump < MAX_START_ID_JUMP:
                 pending_start_id = new_start_id
 
+    if travel_tracking_started:
+        travel_previous_angle_by_id, accumulated_travel_intervals = update_travel_tracker(
+            markers,
+            travel_previous_angle_by_id,
+            accumulated_travel_intervals
+        )
+
     if not waiting_for_motion_result:
         sequence_state, one_cycle_finished = run_pressurize_sequence(sequence_state)
     else:
@@ -787,10 +945,7 @@ while True:
         now = time.time()
 
         if now - motion_result_wait_start >= COMMAND_INTERVAL_SEC:
-            new_motion_result_text = get_motion_result(markers, motion_reference)
-
-            if new_motion_result_text is not None:
-                motion_result_text = new_motion_result_text
+            print_angle_changes(markers, motion_reference)
 
             if pending_start_id is not None:
                 current_start_id = pending_start_id
@@ -813,3 +968,15 @@ while True:
 cap.release()
 writer.release()
 cv2.destroyAllWindows()
+moved_intervals = accumulated_travel_intervals if travel_tracking_started else None
+final_distance_cm = (
+    moved_intervals * CELL_INTERVAL_LENGTH_CM
+    if moved_intervals is not None
+    else None
+)
+
+if moved_intervals is None or final_distance_cm is None:
+    print("最終移動距離を計算できませんでした（マーカーの回転量を連続追跡できませんでした）")
+else:
+    print(f"移動区間数: {moved_intervals:.2f}区間")
+    print(f"最終移動距離: {final_distance_cm:.2f}cm")

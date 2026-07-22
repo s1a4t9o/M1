@@ -7,7 +7,7 @@ import numpy as np
 MIN_AREA = 15
 
 # === 入力動画 ===
-input_video_path = "mp4_input/test2.mp4"
+input_video_path = "../mp4_input/test6.MOV"
 
 cap = cv2.VideoCapture(input_video_path)
 if not cap.isOpened():
@@ -31,8 +31,8 @@ lower_red1 = np.array([0,   100,   0])
 upper_red1 = np.array([5,   255, 255])
 lower_red2 = np.array([170, 100,   0])
 upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため 170 から
-lower_green = np.array([55,  60,   0])
-upper_green = np.array([90, 255, 255])
+lower_green = np.array([40,  60,   0])
+upper_green = np.array([100, 255, 255])
 
 
 while True:

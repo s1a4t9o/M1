@@ -285,8 +285,8 @@ MIN_AREA = 15
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "mp4_input/test4.mov"
-output_video_path = "mp4_output/output_marker_result4.mp4"
+input_video_path = "../mp4_input/test4.mov"
+output_video_path = "../mp4_output/output_marker_result4.mp4"
 
 cap = cv2.VideoCapture(input_video_path)
 
