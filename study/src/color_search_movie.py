@@ -4,10 +4,10 @@ import cv2
 import numpy as np
 
 # === パラメータ ===
-MIN_AREA = 15
+MIN_AREA = 35
 
 # === 入力動画 ===
-input_video_path = "../mp4_input/test6.MOV"
+input_video_path = "../mp4_input/raw_camera.mp4"
 
 cap = cv2.VideoCapture(input_video_path)
 if not cap.isOpened():
@@ -27,12 +27,15 @@ def filter_small_components(mask, min_area):
 
 
 # === HSV 色範囲 ===
-lower_red1 = np.array([0,   100,   0])
-upper_red1 = np.array([5,   255, 255])
-lower_red2 = np.array([170, 100,   0])
-upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため 170 から
-lower_green = np.array([40,  60,   0])
-upper_green = np.array([100, 255, 255])
+lower_red1 = np.array([0,   80,   0])
+upper_red1 = np.array([20,   255, 255])
+
+lower_red2 = np.array([170, 80,   0])
+upper_red2 = np.array([180, 255, 255])
+
+lower_green = np.array([50,  50,   50])
+upper_green = np.array([80, 255, 255])
+
 
 
 while True:

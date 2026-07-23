@@ -9,18 +9,20 @@ import time
 # =========================
 # パラメータ
 # =========================
-MAX_CENTER_DISTANCE = 8
+MAX_CENTER_DISTANCE = 4
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
-MIN_AREA = 15
+MIN_AREA = 30
 
 # === HSV 色範囲 ===
-lower_red1 = np.array([0,   100,   0])
-upper_red1 = np.array([5,   255, 255])
-lower_red2 = np.array([170, 100,   0])
-upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため 170 から
-lower_green = np.array([40,  60,   0])
-upper_green = np.array([100, 255, 255])
+lower_red1 = np.array([0,   80,   0])
+upper_red1 = np.array([20,   255, 255])
+
+lower_red2 = np.array([170, 80,   0])
+upper_red2 = np.array([180, 255, 255])
+
+lower_green = np.array([50,  30,   20])
+upper_green = np.array([90, 255, 255])
 
 CIRCULARITY_THRESHOLD = 0.9
 TARGET_ANGLE_DEG = -30
@@ -44,7 +46,7 @@ BOTTOM_ANGLE_DEG = -90.0
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "../mp4_input/test8.mp4"
+input_video_path = "../mp4_input/raw_camera.mp4"
 output_video_path = "../mp4_output/output_marker_control_direction_fixed.mp4"
 
 
