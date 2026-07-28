@@ -1,11 +1,10 @@
-#WebカメラでHIDASのマーカーを検出し、回転モードの指示を出すプログラム
+#HIDASの左回転自動化
 
 import cv2
 import numpy as np
 import math
 import time
 import socket
-import os
 
 
 # =========================
@@ -62,12 +61,8 @@ CAMERA_WIDTH = 640
 CAMERA_HEIGHT = 480
 
 # 処理結果を動画保存するか
-SAVE_OUTPUT_VIDEO = True
-output_video_path = "../mp4_output/outcontrol.mp4"
-
-# 画像処理前の元動画を保存するか
-SAVE_RAW_VIDEO = True
-raw_video_path = "../mp4_output/raw_camera.mp4"
+SAVE_OUTPUT_VIDEO = False
+output_video_path = "mp4_output/output_marker_control.mp4"
 
 
 def connect_hidas():
@@ -890,32 +885,16 @@ fps = cap.get(cv2.CAP_PROP_FPS)
 if fps <= 0:
     fps = 30
 
-# 保存先フォルダが存在しない場合は作成する
-os.makedirs(os.path.dirname(output_video_path), exist_ok=True)
-os.makedirs(os.path.dirname(raw_video_path), exist_ok=True)
-
 writer = None
-raw_writer = None
 
-fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-
-# 処理結果動画のwriterは、最初のprocessed_frameが得られた時点で、
-# 実際の画像処理解像度（processed_frame.shape）を使って作成する。
-# そのため、ここではまだ作成しない。
-
-if SAVE_RAW_VIDEO:
-    raw_writer = cv2.VideoWriter(
-        raw_video_path,
+if SAVE_OUTPUT_VIDEO:
+    fourcc = cv2.VideoWriter_fourcc(*"mp4v")
+    writer = cv2.VideoWriter(
+        output_video_path,
         fourcc,
         fps,
         (width, height)
     )
-
-    if not raw_writer.isOpened():
-        cap.release()
-        if writer is not None:
-            writer.release()
-        raise RuntimeError(f"元動画の保存先を開けません: {raw_video_path}")
 
 print(f"Webカメラ準備完了: {width}x{height}, FPS={fps:.1f}")
 print("Enterキーを押すと回転モードを開始します")
@@ -927,8 +906,6 @@ except OSError as exc:
     cap.release()
     if writer is not None:
         writer.release()
-    if raw_writer is not None:
-        raw_writer.release()
     cv2.destroyAllWindows()
     raise RuntimeError(f"HIDASにTCP接続できませんでした: {exc}") from exc
 
@@ -964,41 +941,12 @@ while True:
     if not ret:
         break
 
-    # 画像処理前の元フレームをそのまま保存する
-    if raw_writer is not None:
-        raw_writer.write(frame)
-
     processed_frame, markers, circularity, prev_id_positions = process_frame(
         frame,
         prev_id_positions
     )
 
-    # 処理結果動画は、実際に画像処理しているフレームの解像度で保存する
-    if SAVE_OUTPUT_VIDEO:
-        if writer is None:
-            processed_height, processed_width = processed_frame.shape[:2]
-
-            writer = cv2.VideoWriter(
-                output_video_path,
-                fourcc,
-                fps,
-                (processed_width, processed_height)
-            )
-
-            if not writer.isOpened():
-                cap.release()
-                if raw_writer is not None:
-                    raw_writer.release()
-                cv2.destroyAllWindows()
-                raise RuntimeError(
-                    f"処理結果動画の保存先を開けません: {output_video_path}"
-                )
-
-            print(
-                f"処理結果動画の保存解像度: "
-                f"{processed_width}x{processed_height}"
-            )
-
+    if writer is not None:
         writer.write(processed_frame)
 
     cv2.imshow("marker result", processed_frame)
@@ -1133,6 +1081,4 @@ while True:
 cap.release()
 if writer is not None:
     writer.release()
-if raw_writer is not None:
-    raw_writer.release()
 cv2.destroyAllWindows()

@@ -1,3 +1,5 @@
+#HIDAS制御アプリとの接続テスト
+
 import socket
 import time
 
