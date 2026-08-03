@@ -7,7 +7,7 @@ picam2 = Picamera2()
 # 180°回転してプレビュー
 config = picam2.create_preview_configuration(
     #main={"format": "XRGB8888", "size": (640, 480)},
-    main={"format": "XRGB8888", "size": (1920, 1080)},
+    main={"format": "XRGB8888", "size": (640, 480)},
     transform=Transform(hflip=True, vflip=True)
 )
 picam2.configure(config)
