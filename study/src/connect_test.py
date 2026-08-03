@@ -3,7 +3,7 @@
 import socket
 import time
 
-HOST = "192.168.10.4"   #HIDAS Dock
+HOST = "192.168.11.4"   #HIDAS Dock
 PORT = 60001
 
 def main():
