@@ -52,7 +52,7 @@ MAX_BOTTOM_INTERVAL_JUMP = 1
 # =========================
 # TCP通信設定
 # =========================
-HOST = "192.168.11.4"
+HOST = "192.168.10.4"
 PORT = 60001
 SOCKET_TIMEOUT_SEC = 5.0
 
