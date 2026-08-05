@@ -1,62 +1,52 @@
-# HIDASマーカー認識・描画専用コード
-# 制御指示・TCP通信は行わない
-
+#HIDASのマーカーを検出し、回転モードの指示を出すプログラム（入力：動画）
 
 import cv2
 import numpy as np
 import math
-import os
-from picamera2 import Picamera2
-from libcamera import Transform
+import time
 
 
 # =========================
 # パラメータ
 # =========================
-MAX_CENTER_DISTANCE = 5
+MAX_CENTER_DISTANCE = 4
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
-MIN_AREA = 18
+MIN_AREA = 30
 
-# =========================
-# HSV色閾値
-# =========================
+# === HSV 色範囲 ===
 lower_red1 = np.array([0,   80,   0])
 upper_red1 = np.array([20,   255, 255])
 
 lower_red2 = np.array([170, 80,   0])
 upper_red2 = np.array([180, 255, 255])
 
-lower_green = np.array([55,  30,   0])
+lower_green = np.array([50,  30,   20])
 upper_green = np.array([90, 255, 255])
 
-CIRCULARITY_THRESHOLD = 0.85
+CIRCULARITY_THRESHOLD = 0.9
 TARGET_ANGLE_DEG = -30
 
 MAX_START_ID_JUMP = 3
 MAX_TRACK_DISTANCE = 50
 
+COMMAND_INTERVAL_SEC = 2.0
+
+# 各区間の実測長[cm]
+# 並び順：ID1→ID16, ID16→ID15, ... , ID2→ID1
+# 現在はすべて34 cm。実測後に各値を書き換えてください。
+CELL_INTERVAL_LENGTH_CM = 34.0
+BOTTOM_INTERVAL_STABLE_FRAMES = 3
+
+# HIDAS中心から見た画像下方向の角度
+BOTTOM_ANGLE_DEG = -90.0
 
 # =========================
-# Raspberry Piカメラ設定
+# 入出力動画
 # =========================
-CAMERA_WIDTH = 1920
-CAMERA_HEIGHT = 1080
+input_video_path = "../mp4_input/raw_camera.mp4"
+output_video_path = "../mp4_output/output_marker_control.mp4"
 
-# 表示時だけ縮小するサイズ
-DISPLAY_WIDTH = 960
-DISPLAY_HEIGHT = 540
-
-# カメラを180度回転する設定
-CAMERA_HFLIP = True
-CAMERA_VFLIP = True
-
-# 動画保存時のFPS
-OUTPUT_VIDEO_FPS = 30.0
-
-# 処理結果を動画保存するか
-SAVE_OUTPUT_VIDEO = False
-output_video_path = "mp4_output/output_marker_control.mp4"
 
 def find_circles(mask, MIN_AREA):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -275,6 +265,340 @@ def calculate_overall_circularity(markers):
 
     return 4 * math.pi * area / (perimeter ** 2)
 
+
+def make_cells_from_start_id(start_id):
+    pressurize_cells = [
+        ((start_id - 1 - i) % 16) + 1
+        for i in range(7)
+    ]
+
+    depressurize_cells = [
+        cell_id for cell_id in range(1, 17)
+        if cell_id not in pressurize_cells
+    ]
+
+    return pressurize_cells, depressurize_cells
+
+
+def find_initial_start_id(markers):
+    valid_markers = [
+        m for m in markers
+        if m["assigned_id"] != -1 and m["angle_deg"] > TARGET_ANGLE_DEG
+    ]
+
+    if len(valid_markers) == 0:
+        return None
+
+    start_marker = min(
+        valid_markers,
+        key=lambda m: abs(m["angle_deg"] - TARGET_ANGLE_DEG)
+    )
+
+    return start_marker["assigned_id"]
+
+
+def find_new_over_start_id(markers, previous_over_ids):
+    current_over_ids = set(
+        m["assigned_id"] for m in markers
+        if m["assigned_id"] != -1 and m["angle_deg"] > TARGET_ANGLE_DEG
+    )
+
+    new_over_ids = current_over_ids - previous_over_ids
+
+    if len(new_over_ids) == 0:
+        return None, current_over_ids
+
+    new_over_markers = [
+        m for m in markers
+        if m["assigned_id"] in new_over_ids
+    ]
+
+    start_marker = min(
+        new_over_markers,
+        key=lambda m: abs(m["angle_deg"] - TARGET_ANGLE_DEG)
+    )
+
+    return start_marker["assigned_id"], current_over_ids
+
+
+def cell_distance_circular(a, b):
+    diff = abs(a - b)
+    return min(diff, 16 - diff)
+
+
+def normalize_angle_diff(diff):
+    while diff > 180:
+        diff -= 360
+    while diff < -180:
+        diff += 360
+    return diff
+
+
+
+def get_bottom_continuous_position(markers):
+    """
+    画像左方向への移動を正方向として、真下位置を求める。
+
+    区間の並び:
+      0.0～1.0   : ID1 → ID2
+      1.0～2.0   : ID2 → ID3
+      ...
+      15.0～16.0 : ID16 → ID1
+
+    fraction=0.0 は区間始点側、1.0 は区間終点側。
+    HIDASが画像左へ進むと、positionが増える。
+    """
+    marker_by_id = {
+        m["assigned_id"]: m
+        for m in markers
+        if m["assigned_id"] != -1
+    }
+
+    for interval_index in range(16):
+        start_id = interval_index + 1
+        end_id = (start_id % 16) + 1
+
+        if start_id not in marker_by_id or end_id not in marker_by_id:
+            continue
+
+        start_marker = marker_by_id[start_id]
+        end_marker = marker_by_id[end_id]
+        start_angle = start_marker["angle_deg"]
+        end_angle = end_marker["angle_deg"]
+
+        # 画像左方向への回転では、真下を通るIDは1→2→3…と進む。
+        # ID2はID1の時計回り側にあるため、角度は減少方向で測る。
+        interval_angle = (start_angle - end_angle) % 360.0
+        bottom_from_start = (start_angle - BOTTOM_ANGLE_DEG) % 360.0
+
+        # 通常は約22.5deg。変形を考慮して90degまで許容する。
+        if interval_angle <= 0.0 or interval_angle > 90.0:
+            continue
+
+        if bottom_from_start <= interval_angle:
+            fraction = bottom_from_start / interval_angle
+
+            return {
+                "interval_index": interval_index,
+                "fraction": fraction,
+                "position": interval_index + fraction,
+                "start_id": start_id,
+                "end_id": end_id,
+                "start_marker": start_marker,
+                "end_marker": end_marker,
+            }
+
+    return None
+
+
+def normalize_interval_step(step):
+    """隣接区間への移動を、左方向+1・右方向-1として返す。"""
+    if step == 1 or step == -15:
+        return 1
+    if step == -1 or step == 15:
+        return -1
+    return None
+
+
+def initialize_boundary_tracker(markers):
+    bottom_info = get_bottom_continuous_position(markers)
+    if bottom_info is None:
+        return None
+
+    return {
+        "start_fraction": bottom_info["fraction"],
+        "stable_interval": bottom_info["interval_index"],
+        "current_fraction": bottom_info["fraction"],
+        "crossed_intervals": 0,
+        "candidate_interval": None,
+        "candidate_count": 0,
+    }
+
+
+def update_boundary_tracker(markers, tracker):
+    """
+    毎フレームの角度変化量は積算しない。
+    真下区間が隣の区間へ確実に移ったときだけ、
+    crossed_intervalsを+1または-1する。
+    """
+    if tracker is None:
+        return initialize_boundary_tracker(markers)
+
+    bottom_info = get_bottom_continuous_position(markers)
+    if bottom_info is None:
+        return tracker
+
+    current_interval = bottom_info["interval_index"]
+
+    if current_interval == tracker["stable_interval"]:
+        tracker["current_fraction"] = bottom_info["fraction"]
+        tracker["candidate_interval"] = None
+        tracker["candidate_count"] = 0
+        return tracker
+
+    if current_interval == tracker["candidate_interval"]:
+        tracker["candidate_count"] += 1
+    else:
+        tracker["candidate_interval"] = current_interval
+        tracker["candidate_count"] = 1
+
+    if tracker["candidate_count"] < BOTTOM_INTERVAL_STABLE_FRAMES:
+        return tracker
+
+    raw_step = current_interval - tracker["stable_interval"]
+    direction = normalize_interval_step(raw_step)
+
+    # 隣接区間以外への飛びはID誤認識として採用しない。
+    if direction is None:
+        tracker["candidate_interval"] = None
+        tracker["candidate_count"] = 0
+        return tracker
+
+    tracker["crossed_intervals"] += direction
+    tracker["stable_interval"] = current_interval
+    tracker["current_fraction"] = bottom_info["fraction"]
+    tracker["candidate_interval"] = None
+    tracker["candidate_count"] = 0
+
+    return tracker
+
+
+def calculate_boundary_distance(tracker):
+    if tracker is None:
+        return None, None
+
+    moved_intervals = (
+        tracker["crossed_intervals"]
+        + tracker["current_fraction"]
+        - tracker["start_fraction"]
+    )
+    return moved_intervals, moved_intervals * CELL_INTERVAL_LENGTH_CM
+
+
+def capture_motion_reference(markers):
+    valid_markers = [
+        m for m in markers
+        if m["assigned_id"] != -1
+    ]
+
+    if len(valid_markers) == 0:
+        return None
+
+    angle_by_id = {
+        m["assigned_id"]: m["angle_deg"]
+        for m in valid_markers
+    }
+
+    bottom_info = get_bottom_continuous_position(valid_markers)
+
+    return {
+        "bottom_info": bottom_info,
+        "bottom_position": bottom_info["position"] if bottom_info is not None else None,
+        "angle_by_id": angle_by_id
+    }
+
+
+def print_angle_changes(markers, motion_reference):
+    if motion_reference is None:
+        return
+
+    valid_markers = [
+        m for m in markers
+        if m["assigned_id"] != -1
+    ]
+
+    if len(valid_markers) == 0:
+        return
+
+    print("角度変化量:")
+    previous_angles = motion_reference["angle_by_id"]
+
+    for m in sorted(valid_markers, key=lambda item: item["assigned_id"]):
+        cell_id = m["assigned_id"]
+
+        if cell_id not in previous_angles:
+            continue
+
+        angle_diff = normalize_angle_diff(
+            m["angle_deg"] - previous_angles[cell_id]
+        )
+        print(f"セル{cell_id}: {angle_diff:.1f}deg")
+
+
+def draw_motion_result(image, motion_result_text):
+    if not motion_result_text:
+        return image
+
+    height, width = image.shape[:2]
+
+    cv2.putText(
+        image,
+        motion_result_text,
+        (20, height - 100),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.8,
+        (0, 0, 0),
+        2
+    )
+
+    return image
+
+
+def start_new_sequence(start_id):
+    pressurize_cells, depressurize_cells = make_cells_from_start_id(start_id)
+
+    print(f"セル{depressurize_cells}を減圧してください")
+
+    return {
+        "pressurize_cells": pressurize_cells,
+        "sequence_index": 0,
+        "last_command_time": 0,
+        "cycle_count": 0
+    }
+
+
+def run_pressurize_sequence(sequence_state):
+    if sequence_state is None:
+        return sequence_state, False
+
+    pressurize_cells = sequence_state["pressurize_cells"]
+    sequence_index = sequence_state["sequence_index"]
+    last_command_time = sequence_state["last_command_time"]
+    cycle_count = sequence_state["cycle_count"]
+
+    if cycle_count == 0:
+        current_cycle_cells = pressurize_cells
+    else:
+        current_cycle_cells = pressurize_cells[:4]
+
+    if len(current_cycle_cells) == 0:
+        return sequence_state, False
+
+    now = time.time()
+
+    if now - last_command_time < COMMAND_INTERVAL_SEC:
+        return sequence_state, False
+
+    cell_id = current_cycle_cells[sequence_index]
+    print(f"セル{cell_id}を加圧してください")
+
+    last_command_time = now
+    sequence_index += 1
+
+    one_cycle_finished = False
+
+    if sequence_index >= len(current_cycle_cells):
+        sequence_index = 0
+        cycle_count += 1
+        one_cycle_finished = True
+
+    sequence_state["sequence_index"] = sequence_index
+    sequence_state["last_command_time"] = last_command_time
+    sequence_state["cycle_count"] = cycle_count
+
+    return sequence_state, one_cycle_finished
+
+
 def draw_neighbor_distances(image, markers):
     if len(markers) < 2:
         return image
@@ -315,14 +639,65 @@ def draw_circularity_label(image, circularity):
     return image
 
 
+
+
+def draw_bottom_reference(image, markers, hid_center):
+    if hid_center is None:
+        return image
+
+    hx, hy = int(hid_center[0]), int(hid_center[1])
+    h, _ = image.shape[:2]
+
+    # HIDAS中心から画像下方向へ真下基準線を描画
+    cv2.line(image, (hx, hy), (hx, h - 1), (0, 0, 255), 3)
+
+    bottom_info = get_bottom_continuous_position(markers)
+    if bottom_info is None:
+        return image
+
+    start_marker = bottom_info["start_marker"]
+    end_marker = bottom_info["end_marker"]
+    fraction = bottom_info["fraction"]
+
+    for marker in (start_marker, end_marker):
+        x, y = marker["center"]
+        cv2.circle(image, (x, y), 12, (0, 255, 255), 3)
+        cv2.line(image, (hx, hy), (x, y), (0, 255, 0), 2)
+
+    cv2.line(
+        image,
+        start_marker["center"],
+        end_marker["center"],
+        (255, 0, 255),
+        2
+    )
+
+    cv2.putText(
+        image,
+        f"BOTTOM: ID{bottom_info['start_id']}-ID{bottom_info['end_id']}  {fraction * 100.0:.1f}%",
+        (20, 35),
+        cv2.FONT_HERSHEY_SIMPLEX,
+        0.65,
+        (0, 255, 255),
+        2
+    )
+
+    return image
+
+
 def process_frame(image, prev_id_positions):
     hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
     red1 = cv2.inRange(hsv, lower_red1, upper_red1)
     red2 = cv2.inRange(hsv, lower_red2, upper_red2)
     red_mask = cv2.bitwise_or(red1, red2)
-
     green_mask = cv2.inRange(hsv, lower_green, upper_green)
+
+    kernel = np.ones((3,3), np.uint8)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_OPEN, kernel)
+    red_mask = cv2.morphologyEx(red_mask, cv2.MORPH_CLOSE, kernel)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_OPEN, kernel)
+    green_mask = cv2.morphologyEx(green_mask, cv2.MORPH_CLOSE, kernel)
 
     red_circles = find_circles(red_mask, MIN_AREA)
     green_circles = find_circles(green_mask, MIN_AREA)
@@ -392,38 +767,10 @@ def process_frame(image, prev_id_positions):
 
     markers = correct_id1_id9_by_red_area(markers)
 
-    # まず、そのフレーム単体でIDを付与する
     markers, hid_center = assign_ids_initial(markers)
 
-    # 前フレームのID位置がある場合は、一度トラッキングでIDを安定化する
-    # ただし、トラッキング結果に assigned_id == -1 が出た場合は、
-    # トラッキング失敗として、そのフレーム単体のID付与に戻す。
     if prev_id_positions is not None:
-        tracked_markers, tracked_id_positions = stabilize_ids_by_previous_frame(
-            markers,
-            prev_id_positions
-        )
-
-        tracking_failed = any(m["assigned_id"] == -1 for m in tracked_markers)
-
-        if tracking_failed:
-            # 追跡でIDが付かなかった場合は、前フレーム追跡を捨ててIDを付け直す
-            markers, hid_center = assign_ids_initial(markers)
-            id_positions = build_id_positions(markers)
-
-            cv2.putText(
-                image,
-                "TRACKING FAILED -> REASSIGN ID",
-                (30, 90),
-                cv2.FONT_HERSHEY_SIMPLEX,
-                0.7,
-                (0, 0, 255),
-                2
-            )
-
-        else:
-            markers = tracked_markers
-            id_positions = tracked_id_positions
+        markers, id_positions = stabilize_ids_by_previous_frame(markers, prev_id_positions)
     else:
         id_positions = build_id_positions(markers)
 
@@ -447,6 +794,8 @@ def process_frame(image, prev_id_positions):
             (0, 255, 255),
             2
         )
+
+        image = draw_bottom_reference(image, markers, hid_center)
 
     for m in markers:
         center = m["center"]
@@ -485,89 +834,17 @@ def process_frame(image, prev_id_positions):
 
 
 
-
-def main():
-    picam2 = Picamera2()
-
-    camera_config = picam2.create_preview_configuration(
-        main={
-            "format": "XRGB8888",
-            "size": (CAMERA_WIDTH, CAMERA_HEIGHT)
-        },
-        transform=Transform(
-            hflip=CAMERA_HFLIP,
-            vflip=CAMERA_VFLIP
-        )
-    )
-
-    picam2.configure(camera_config)
-    picam2.start()
-
-    writer = None
-
-    if SAVE_OUTPUT_VIDEO:
-        output_dir = os.path.dirname(output_video_path)
-
-        if output_dir:
-            os.makedirs(output_dir, exist_ok=True)
-
-        fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-        writer = cv2.VideoWriter(
-            output_video_path,
-            fourcc,
-            OUTPUT_VIDEO_FPS,
-            (CAMERA_WIDTH, CAMERA_HEIGHT)
-        )
-
-        if not writer.isOpened():
-            picam2.stop()
-            cv2.destroyAllWindows()
-            raise RuntimeError(f"出力動画を開けません: {output_video_path}")
-
-    print(
-        f"描画専用モード開始: {CAMERA_WIDTH}x{CAMERA_HEIGHT}, "
-        f"表示サイズ={DISPLAY_WIDTH}x{DISPLAY_HEIGHT}"
-    )
-    print("ESCキーで終了します")
-
-    prev_id_positions = None
-
-    try:
-        while True:
-            captured_frame = picam2.capture_array()
-
-            frame = cv2.cvtColor(
-                captured_frame,
-                cv2.COLOR_BGRA2BGR
-            )
-
-            processed_frame, markers, circularity, prev_id_positions = process_frame(
-                frame,
-                prev_id_positions
-            )
-
-            if writer is not None:
-                writer.write(processed_frame)
-
-            display_frame = cv2.resize(
-                processed_frame,
-                (DISPLAY_WIDTH, DISPLAY_HEIGHT),
-                interpolation=cv2.INTER_AREA
-            )
-
-            cv2.imshow("HIDAS marker drawing", display_frame)
-
-            if cv2.waitKey(1) & 0xFF == 27:
-                break
-
-    finally:
-        picam2.stop()
-
-        if writer is not None:
-            writer.release()
-
-        cv2.destroyAllWindows()
-
-
-if __name__ == "__main__":
-    main()
+cap = cv2.VideoCapture(input_video_path)
+if not cap.isOpened():
+    raise FileNotFoundError(f"動画が開けません: {input_video_path}")
+prev_id_positions=None
+while True:
+    ret, frame = cap.read()
+    if not ret:
+        break
+    processed_frame, markers, circularity, prev_id_positions = process_frame(frame, prev_id_positions)
+    cv2.imshow("marker result", processed_frame)
+    if cv2.waitKey(1)&0xFF==27:
+        break
+cap.release()
+cv2.destroyAllWindows()
