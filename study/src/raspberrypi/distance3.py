@@ -51,7 +51,7 @@ BOTTOM_INTERVAL_STABLE_FRAMES = 3
 # =========================
 # TCP通信設定
 # =========================
-HOST = "192.168.10.4"
+HOST = "10.109.199.103"
 PORT = 60001
 SOCKET_TIMEOUT_SEC = 5.0
 
