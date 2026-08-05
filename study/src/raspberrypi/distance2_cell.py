@@ -1297,8 +1297,16 @@ except KeyboardInterrupt:
     print_boundary_distance(boundary_tracker, label="中断時点")
 
 finally:
-    # ESC・カメラ終了・Ctrl+Cのいずれでも最終結果を表示する。
+    # ESC・Ctrl+C・例外終了のいずれでも最終結果を表示する。
     print_boundary_distance(boundary_tracker, label="終了時点")
+
+    # 終了前に、加圧・減圧中のセルをすべてIdleへ戻す。
+    if hidas_sock is not None:
+        try:
+            print("全セルをアイドル状態にします")
+            send_all_idle()
+        except Exception as exc:
+            print(f"終了時のIdle送信に失敗しました: {exc}")
 
     picam2.stop()
 
