@@ -52,7 +52,7 @@ MIN_COMMON_MARKERS_FOR_TRAVEL = 6
 # =========================
 # TCP通信設定
 # =========================
-HOST = "192.168.11.4"
+HOST = "10.109.199.103"
 PORT = 60001
 SOCKET_TIMEOUT_SEC = 5.0
 
