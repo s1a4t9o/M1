@@ -43,8 +43,10 @@ BOTTOM_ANGLE_DEG = -90.0
 # =========================
 # Raspberry Piカメラ設定
 # =========================
-CAMERA_WIDTH = 1920
-CAMERA_HEIGHT = 1080
+# CAMERA_WIDTH = 1920
+# CAMERA_HEIGHT = 1080
+DISPLAY_WIDTH = 960
+DISPLAY_HEIGHT = 540
 
 # 表示時だけ縮小するサイズ
 DISPLAY_WIDTH = 960
