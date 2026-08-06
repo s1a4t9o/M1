@@ -3,7 +3,7 @@
 import socket
 import time
 
-HOST = "192.168.11.4"   #HIDAS Dock
+HOST = "127.0.0.1"   #HIDAS Dock
 PORT = 60001
 
 def main():
@@ -26,7 +26,7 @@ def main():
             time.sleep(10)
 
             # 状態取得コマンド
-            message = "CMB 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000 000\n"
+            message = "CMA\n"
             sock.sendall(message.encode("utf-8"))
             print(f"送信: {message.strip()}")
 
