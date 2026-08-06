@@ -31,7 +31,7 @@ lower_green = np.array([55,  30,   0])
 upper_green = np.array([90, 255, 255])
 
 
-CIRCULARITY_THRESHOLD = 0.85
+CIRCULARITY_THRESHOLD = 0.75
 TARGET_ANGLE_DEG = -30
 
 MAX_START_ID_JUMP = 3
