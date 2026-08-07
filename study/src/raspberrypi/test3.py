@@ -288,7 +288,7 @@ def make_depressurize_states_by_pressure(depressurize_cells):
         pressures = pressures_by_cell.get(unit_id)
 
         if pressures is None or len(pressures) != 3:
-            print(f"ユニット{unit_id}: 圧力データなし → 000")
+            # print(f"ユニット{unit_id}: 圧力データなし → 000")
             states_by_unit[unit_id] = CELL_IDLE
             continue
 
@@ -296,7 +296,7 @@ def make_depressurize_states_by_pressure(depressurize_cells):
         threshold = MIN_VENT_PRESSURE_KPA.get(unit_id)
 
         if threshold is None:
-            print(f"ユニット{unit_id}: 減圧閾値が未設定 → 000")
+            # print(f"ユニット{unit_id}: 減圧閾値が未設定 → 000")
             states_by_unit[unit_id] = CELL_IDLE
             continue
 
@@ -308,14 +308,14 @@ def make_depressurize_states_by_pressure(depressurize_cells):
                 state_digits.append("0")
                 result = "Idle"
 
-            print(
-                f"ユニット{unit_id}・セル{cell_no}: "
-                f"{pressure:.2f} kPa / 閾値{threshold:.2f} kPa → {result}"
-            )
+            # print(
+            #     f"ユニット{unit_id}・セル{cell_no}: "
+            #     f"{pressure:.2f} kPa / 閾値{threshold:.2f} kPa → {result}"
+            # )
 
         state = "".join(state_digits)
         states_by_unit[unit_id] = state
-        print(f"ユニット{unit_id}: 個別減圧指示 → {state}")
+        # print(f"ユニット{unit_id}: 個別減圧指示 → {state}")
 
     return states_by_unit
 
