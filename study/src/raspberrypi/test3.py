@@ -89,8 +89,10 @@ hidas_sock = None
 # =========================
 # Raspberry Piカメラ設定
 # =========================
-CAMERA_WIDTH = 1920
-CAMERA_HEIGHT = 1080
+# CAMERA_WIDTH = 1920
+# CAMERA_HEIGHT = 1080
+CAMERA_WIDTH = 960
+CAMERA_HEIGHT = 540
 
 # 画面表示時だけ縮小するサイズ
 DISPLAY_WIDTH = 960
