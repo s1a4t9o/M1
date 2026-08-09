@@ -46,7 +46,7 @@ DEPRESSURIZE_INTERVAL_SEC = 3.0  # 減圧時間
 # マーカー縮尺による移動距離推定
 # =========================
 # マーカー外径の実寸[cm]
-MARKER_DIAMETER_CM = 10.0
+MARKER_DIAMETER_CM = 11.5
 
 # 真下位置の描画には従来どおり使用
 BOTTOM_ANGLE_DEG = -90.0
