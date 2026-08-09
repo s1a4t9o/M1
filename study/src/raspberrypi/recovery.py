@@ -46,7 +46,7 @@ DEPRESSURIZE_INTERVAL_SEC = 3.0  # 減圧時間
 # 区間停滞時の復帰動作
 # =========================
 MAX_STALLED_CYCLES = 10
-RECOVERY_PRESSURIZE_SEC = 15.0
+RECOVERY_PRESSURIZE_SEC = 20.0
 RECOVERY_EXCLUDED_UNITS = {1, 9, 10, 15}
 
 # =========================
@@ -68,13 +68,13 @@ SOCKET_TIMEOUT_SEC = 5.0
 # センサの個体差に合わせて、ユニット1～16の値を個別に調整する。
 MIN_VENT_PRESSURE_KPA = {
     1: -10,
-    2: 0.10,
-    3: 0.10,
-    4: 0.10,
+    2: 0.50,
+    3: 0.50,
+    4: 0.50,
     5: -10,
     6: -10,
-    7: 0.10,
-    8: 1,
+    7: 0.50,
+    8: 2.3,
     9: 0.10,
     10: 0.10,
     11: 3.5,
