@@ -43,6 +43,13 @@ IDLE_INTERVAL_SEC = 1.0  # Idle指示後、次の加圧までの待ち時間
 DEPRESSURIZE_INTERVAL_SEC = 3.0  # 減圧時間
 
 # =========================
+# 区間停滞時の復帰動作
+# =========================
+MAX_STALLED_CYCLES = 10
+RECOVERY_PRESSURIZE_SEC = 15.0
+RECOVERY_EXCLUDED_UNITS = {1, 9, 10, 15}
+
+# =========================
 # 真下セル通過による移動距離推定
 # =========================
 CELL_INTERVAL_LENGTH_CM = 34.0
@@ -912,6 +919,62 @@ def start_new_sequence(start_id, sequence_number):
     }
 
 
+def start_stall_recovery(sequence_state):
+    """
+    同じ真下区間から10サイクル進めなかった場合の復帰動作を開始する。
+
+    直前まで減圧していたユニットを加圧するが、危険なユニット1・15は
+    必ず除外する。復帰加圧中は、それ以外のユニットをIdleにする。
+    """
+    if sequence_state is None:
+        return None
+
+    recovery_cells = sorted(
+        set(sequence_state["depressurize_cells"])
+        - RECOVERY_EXCLUDED_UNITS
+    )
+
+    if len(recovery_cells) == 0:
+        print("復帰加圧できるユニットがないため、通常制御を再開します")
+        return {
+            "recovery_cells": [],
+            "start_time": time.time(),
+            "command_sent": False,
+        }
+
+    print(
+        f"同じ区間のまま{MAX_STALLED_CYCLES}サイクル経過したため、"
+        f"復帰動作を開始します"
+    )
+    print(
+        f"直前まで減圧していたセル{recovery_cells}を加圧してください"
+        f"（危険なユニット1・15は除外）"
+    )
+    send_cell_command(pressurize_cells=recovery_cells)
+
+    return {
+        "recovery_cells": recovery_cells,
+        "start_time": time.time(),
+        "command_sent": True,
+    }
+
+
+def run_stall_recovery(recovery_state):
+    """復帰加圧時間の終了後に全セルをIdleへ戻す。"""
+    if recovery_state is None:
+        return True
+
+    if not recovery_state["command_sent"]:
+        return True
+
+    if time.time() - recovery_state["start_time"] < RECOVERY_PRESSURIZE_SEC:
+        return False
+
+    print("復帰加圧を終了し、全セルをアイドル状態にします")
+    send_all_idle()
+    return True
+
+
 def run_pressurize_sequence(sequence_state):
     """
     1セルずつ、次の順番で指示を出す。
@@ -1402,6 +1465,13 @@ motion_result_text = ""
 # 目標距離到達による停止かどうか
 target_reached = False
 
+# 同じ真下区間のまま終了した内部サイクル数
+stalled_cycle_count = 0
+stall_reference_interval = None
+
+# 区間停滞時の復帰動作状態
+recovery_state = None
+
 
 try:
     while True:
@@ -1519,12 +1589,69 @@ try:
 
                 step2_first_output_done = True
 
-        if not waiting_for_motion_result and not waiting_for_next_cycle:
+        if recovery_state is not None:
+            recovery_finished = run_stall_recovery(recovery_state)
+
+            if recovery_finished:
+                recovery_state = None
+                stalled_cycle_count = 0
+                stall_reference_interval = (
+                    boundary_tracker["stable_interval"]
+                    if boundary_tracker is not None
+                    else None
+                )
+
+                # 復帰動作後、同じ開始セルで減圧から通常制御をやり直す。
+                sequence_number += 1
+                sequence_state = start_new_sequence(
+                    current_start_id,
+                    sequence_number
+                )
+                motion_reference = capture_motion_reference(markers)
+
+        if (
+            recovery_state is None
+            and not waiting_for_motion_result
+            and not waiting_for_next_cycle
+        ):
             sequence_state, one_cycle_finished = run_pressurize_sequence(sequence_state)
         else:
             one_cycle_finished = False
 
         if one_cycle_finished:
+            current_bottom_interval = (
+                boundary_tracker["stable_interval"]
+                if boundary_tracker is not None
+                else None
+            )
+
+            if current_bottom_interval is not None:
+                if stall_reference_interval is None:
+                    stall_reference_interval = current_bottom_interval
+                    stalled_cycle_count = 1
+                elif current_bottom_interval == stall_reference_interval:
+                    stalled_cycle_count += 1
+                else:
+                    print(
+                        f"次の真下区間へ進みました: "
+                        f"区間{stall_reference_interval + 1} → "
+                        f"区間{current_bottom_interval + 1}"
+                    )
+                    stall_reference_interval = current_bottom_interval
+                    stalled_cycle_count = 1
+
+                print(
+                    f"同じ区間での経過サイクル数: "
+                    f"{stalled_cycle_count}/{MAX_STALLED_CYCLES}"
+                )
+
+            if stalled_cycle_count >= MAX_STALLED_CYCLES:
+                recovery_state = start_stall_recovery(sequence_state)
+                waiting_for_motion_result = False
+                waiting_for_next_cycle = False
+                pending_start_id = None
+                continue
+
             # 内部の加圧セル列を1周した時点の最新角度から、次の開始セル候補を決める
             latest_start_id = find_initial_start_id(markers)
 
