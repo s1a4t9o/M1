@@ -45,7 +45,7 @@ DEPRESSURIZE_INTERVAL_SEC = 3.0  # 減圧時間
 # =========================
 # 加圧・減圧セル停滞時の復帰動作
 # =========================
-MAX_STALLED_CYCLES = 7
+MAX_STALLED_CYCLES = 10
 RECOVERY_PRESSURIZE_SEC = 20.0
 RECOVERY_EXCLUDED_UNITS = {1, 9, 10, 15}
 
