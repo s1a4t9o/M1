@@ -7,7 +7,7 @@ import numpy as np
 MIN_AREA = 15  # ここ未満のピクセル数を持つ成分は捨てる
 
 # === 入力画像 ===
-input_path = "images/ttes.jpg"
+input_path = "../images/1.jpg"
 image = cv2.imread(input_path)
 if image is None:
     raise FileNotFoundError(f"画像が読み込めません: {input_path}")
@@ -18,7 +18,7 @@ lower_red1 = np.array([0,   100,   0])
 upper_red1 = np.array([5,   255, 255])
 lower_red2 = np.array([177, 100,   0])
 upper_red2 = np.array([180, 255, 255])   # 0〜180 の両端をまたぐため 170 から
-lower_green = np.array([55,  60,   0])
+lower_green = np.array([30,  30,   0])
 upper_green = np.array([90, 255, 255])
 
 # === マスク生成（色抽出）===
