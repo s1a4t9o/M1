@@ -1,12 +1,25 @@
-## マーカー検出コード（入力出力：画像　角度も描画）
-
 import cv2
 import numpy as np
 import math
 
 
+# =========================
+# HSV色閾値
+# =========================
+lower_red1 = np.array([0, 80, 0])
+upper_red1 = np.array([20, 255, 255])
+
+lower_red2 = np.array([170, 80, 0])
+upper_red2 = np.array([180, 255, 255])
+
+lower_green = np.array([55, 30, 0])
+upper_green = np.array([90, 255, 255])
+
+
 def find_circles(mask, MIN_AREA):
-    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours, _ = cv2.findContours(
+        mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
     circles = []
 
     for cnt in contours:
@@ -21,15 +34,14 @@ def find_circles(mask, MIN_AREA):
 
 
 def get_color_name(hsv_pixel):
-    h, s, v = hsv_pixel
-
-    if s < 50 or v < 50:
-        return "unknown"
-
-    if (0 <= h <= 5) or (177 <= h <= 180):
+    if (
+        np.all(lower_red1 <= hsv_pixel) and np.all(hsv_pixel <= upper_red1)
+    ) or (
+        np.all(lower_red2 <= hsv_pixel) and np.all(hsv_pixel <= upper_red2)
+    ):
         return "red"
 
-    if 55 <= h <= 80:
+    if np.all(lower_green <= hsv_pixel) and np.all(hsv_pixel <= upper_green):
         return "green"
 
     return "unknown"
@@ -43,6 +55,7 @@ def majority_color(colors):
         return "red"
     elif green > red:
         return "green"
+
     return "unknown"
 
 
@@ -137,9 +150,7 @@ def assign_ids_by_order(markers):
 
     n = len(markers_sorted)
 
-    for i in range(n):
-        m = markers_sorted[i]
-
+    for i, m in enumerate(markers_sorted):
         # 検出できたID1とID9は絶対固定
         if m["type"] == 1:
             m["assigned_id"] = 1
@@ -166,10 +177,10 @@ RADIUS_RATIO_MAX = 0.8
 MIN_AREA = 15
 
 # =========================
-# 入力画像
+# 入出力画像
 # =========================
-input_path = "q17.png"
-output_path = "output_marker_result.jpg"
+input_path = "images/qo.png"
+output_path = "images/output_marker_result.jpg"
 
 image = cv2.imread(input_path)
 if image is None:
@@ -178,12 +189,12 @@ if image is None:
 hsv = cv2.cvtColor(image, cv2.COLOR_BGR2HSV)
 
 # 赤色マスク
-red1 = cv2.inRange(hsv, (0, 100, 0), (5, 255, 255))
-red2 = cv2.inRange(hsv, (177, 100, 0), (180, 255, 255))
+red1 = cv2.inRange(hsv, lower_red1, upper_red1)
+red2 = cv2.inRange(hsv, lower_red2, upper_red2)
 red_mask = cv2.bitwise_or(red1, red2)
 
 # 緑色マスク
-green_mask = cv2.inRange(hsv, (55, 60, 0), (80, 255, 255))
+green_mask = cv2.inRange(hsv, lower_green, upper_green)
 
 red_circles = find_circles(red_mask, MIN_AREA)
 green_circles = find_circles(green_mask, MIN_AREA)
@@ -206,7 +217,7 @@ for center_r, r_r in red_circles:
                 "center": (cx, cy),
                 "outer_radius": large_r,
                 "red": (center_r, r_r),
-                "green": (center_g, r_g)
+                "green": (center_g, r_g),
             })
 
 
@@ -247,7 +258,7 @@ for cand in final_candidates:
         "outer_color": outer_color,
         "assigned_id": -1,
         "angle": 0,
-        "angle_deg": 0
+        "angle_deg": 0,
     })
 
 
@@ -271,12 +282,12 @@ if hid_center is not None:
         cv2.FONT_HERSHEY_SIMPLEX,
         0.6,
         (0, 255, 255),
-        2
+        2,
     )
 
 
 # =========================
-# マーカー描画
+# マーカーを描画
 # =========================
 for m in markers:
     center = m["center"]
@@ -300,7 +311,7 @@ for m in markers:
         cv2.FONT_HERSHEY_SIMPLEX,
         0.7,
         (255, 0, 0),
-        2
+        2,
     )
 
     # 角度表示
@@ -311,7 +322,7 @@ for m in markers:
         cv2.FONT_HERSHEY_SIMPLEX,
         0.5,
         (0, 255, 255),
-        2
+        2,
     )
 
 

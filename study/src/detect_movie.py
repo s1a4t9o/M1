@@ -280,13 +280,13 @@ def process_frame(image):
 MAX_CENTER_DISTANCE = 8
 RADIUS_RATIO_MIN = 0.2
 RADIUS_RATIO_MAX = 0.8
-MIN_AREA = 15
+MIN_AREA = 120
 
 # =========================
 # 入出力動画
 # =========================
-input_video_path = "../mp4_input/test4.mov"
-output_video_path = "../mp4_output/output_marker_result4.mp4"
+input_video_path = "../mp4_input/112302.mov"
+output_video_path = "../mp4_output/output_112302.mp4"
 
 cap = cv2.VideoCapture(input_video_path)
 
